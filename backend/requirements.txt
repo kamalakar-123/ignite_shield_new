@@ -9,3 +9,5 @@ pandas
 numpy
 scikit-learn
 joblib
+python-jose[cryptography]
+bcrypt

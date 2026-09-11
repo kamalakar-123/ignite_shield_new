@@ -7,7 +7,7 @@ from models import SensorPrediction
 
 router = APIRouter()
 
-@router.get("/readings", response_model=List[ReadingResponse])
+@router.get("/sensors", response_model=List[ReadingResponse])
 def get_readings(limit: int = 50, db: Session = Depends(get_db)):
     """
     Retrieve stored sensor predictions with an optional limit.
@@ -15,7 +15,7 @@ def get_readings(limit: int = 50, db: Session = Depends(get_db)):
     readings = db.query(SensorPrediction).order_by(SensorPrediction.created_at.desc()).limit(limit).all()
     return readings
 
-@router.get("/readings/latest", response_model=ReadingResponse)
+@router.get("/sensors/latest", response_model=ReadingResponse)
 def get_latest_reading(db: Session = Depends(get_db)):
     """
     Retrieve the most recent sensor prediction.
@@ -25,7 +25,7 @@ def get_latest_reading(db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No readings found.")
     return reading
 
-@router.get("/readings/{id}", response_model=ReadingResponse)
+@router.get("/sensors/{id}", response_model=ReadingResponse)
 def get_reading_by_id(id: int, db: Session = Depends(get_db)):
     """
     Retrieve a specific prediction by ID.
