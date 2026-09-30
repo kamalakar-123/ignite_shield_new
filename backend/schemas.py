@@ -24,6 +24,8 @@ class PredictionResponse(BaseModel):
     fire_risk: str
     confidence: float
     probabilities: Dict[str, float]
+    prediction: Optional[str] = None
+    probability: Optional[float] = None
 
 class ReadingResponse(BaseModel):
     id: int

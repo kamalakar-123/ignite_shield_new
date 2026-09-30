@@ -20,6 +20,14 @@ class SensorPrediction(Base):
     confidence = Column(Float, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    @property
+    def prediction(self):
+        return self.fire_risk.upper() if self.fire_risk else None
+
+    @property
+    def probability(self):
+        return self.confidence
+
 
 class User(Base):
     __tablename__ = "users"

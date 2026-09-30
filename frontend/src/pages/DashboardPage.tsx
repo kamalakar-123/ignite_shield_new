@@ -28,12 +28,14 @@ import { usePolling } from '../hooks/usePolling';
 import { useAlarm } from '../context/AlarmContext';
 import { useTheme } from '../context/ThemeContext';
 import { dashboardApi, predictionApi, alertsApi, sensorApi } from '../services/api';
+import { weatherService } from '../services/weatherService';
 import { LoadingState, ErrorState } from '../components/common/States';
 import { formatRelativeTime, getRiskColor } from '../utils/formatters';
 import { getWindDirectionLabel } from '../utils/fireSpreadEngine';
 import FireMap from '../components/map/FireMap';
 import ZonePanel from '../components/map/ZonePanel';
 import LiveDateTimeBadge from '../components/common/LiveDateTimeBadge';
+import { useGeolocation } from '../hooks/useGeolocation';
 import type { DashboardStats, ReadingResponse, AlertResponse, RiskMapPoint } from '../types';
 
 type EnvFilter = 'all' | 'temperature' | 'humidity' | 'soil_moisture' | 'wind_speed' | 'precipitation';
@@ -57,6 +59,14 @@ const envFilterOptions: {
 export default function DashboardPage() {
   const { theme } = useTheme();
   const isLight = theme === 'light';
+
+  // Device Real-time GPS Geolocation
+  const geo = useGeolocation();
+  const geoRef = useRef(geo);
+
+  useEffect(() => {
+    geoRef.current = geo;
+  }, [geo]);
 
   const [selectedEnvFilter, setSelectedEnvFilter] = useState<EnvFilter>('all');
   const activeFilterOpt =
@@ -106,19 +116,13 @@ export default function DashboardPage() {
   const [predictionConfidence, setPredictionConfidence] = useState<number | null>(null);
   const mountedRef = useRef(true);
 
-  // Sync initial sensor values from database reading when available (if user hasn't modified them)
-  useEffect(() => {
-    if (latest && !hasUserModifiedSensors.current) {
-      setDemoSensors({
-        temperature: latest.temperature ?? 46.0,
-        humidity: latest.humidity ?? 45.0,
-        soil_moisture: latest.soil_moisture ?? 34.0,
-        wind_speed: latest.wind_speed ?? 3.0,
-        wind_direction: latest.wind_direction ?? 120.0,
-        precipitation: latest.precipitation ?? 0.0,
-      });
-    }
-  }, [latest]);
+  // ============================================================
+  // OPEN-METEO LIVE WEATHER STATE & POLLING (Every 30 seconds)
+  // Replaces static/mock initial values with real-time live data
+  // ============================================================
+  const [weatherLoading, setWeatherLoading] = useState<boolean>(true);
+  const [weatherError, setWeatherError] = useState<string | null>(null);
+  const [lastWeatherUpdate, setLastWeatherUpdate] = useState<Date | null>(null);
 
   // ============================================================
   // PREDICTION INTERVAL & REAL-TIME COUNTDOWN SYSTEM
@@ -192,8 +196,23 @@ export default function DashboardPage() {
         precipitation: sensors.precipitation,
       });
       if (mountedRef.current) {
-        setPredictedRisk(res.fire_risk);
-        setPredictionConfidence(res.confidence);
+        const predictedClass = res.prediction || res.fire_risk || 'Low';
+        const upperClass = predictedClass.toUpperCase();
+
+        // Exact probability belonging to the predicted class from the model
+        let classProbability = res.probability ?? res.confidence;
+        if (res.probabilities) {
+          const matchedProb =
+            res.probabilities[upperClass] ??
+            res.probabilities[predictedClass] ??
+            res.probabilities[predictedClass.charAt(0).toUpperCase() + predictedClass.slice(1).toLowerCase()];
+          if (matchedProb != null && !isNaN(matchedProb)) {
+            classProbability = matchedProb;
+          }
+        }
+
+        setPredictedRisk(predictedClass);
+        setPredictionConfidence(classProbability);
         refreshRecent();
       }
     } catch (err: unknown) {
@@ -209,14 +228,79 @@ export default function DashboardPage() {
     }
   }, [refreshRecent]);
 
-  // Run immediate prediction on load (0s)
+  // Open-Meteo Live Weather Polling (Every 30 seconds, using dynamic device GPS coordinates)
+  const fetchLiveWeatherData = useCallback(async (isInitial: boolean = false, lat?: number, lon?: number) => {
+    if (!mountedRef.current) return;
+    if (isInitial) {
+      setWeatherLoading(true);
+    }
+    try {
+      const targetLat = lat ?? geoRef.current.latitude ?? undefined;
+      const targetLon = lon ?? geoRef.current.longitude ?? undefined;
+      const data = await weatherService.fetchLiveWeather(targetLat, targetLon);
+      if (!mountedRef.current) return;
+
+      const liveSensors = {
+        temperature: data.temperature,
+        humidity: data.humidity,
+        soil_moisture: data.soilMoisture,
+        wind_speed: data.windSpeed,
+        wind_direction: data.windDirection,
+        precipitation: data.precipitation,
+      };
+
+      // Keep valid values visible and update state with live Open-Meteo values
+      setDemoSensors(liveSensors);
+      demoSensorsRef.current = liveSensors;
+      hasUserModifiedSensors.current = false;
+      setLastWeatherUpdate(new Date());
+      setWeatherError(null);
+
+      // Trigger fire risk prediction with the fresh live weather data
+      executePrediction(liveSensors);
+    } catch (err: unknown) {
+      if (!mountedRef.current) return;
+      console.warn('Open-Meteo live weather fetch error:', err);
+      // Keep previous valid values visible while flagging error state
+      setWeatherError('Failed to fetch live weather data from Open-Meteo');
+    } finally {
+      if (mountedRef.current) {
+        setWeatherLoading(false);
+      }
+    }
+  }, [executePrediction]);
+
+  // When GPS lock is acquired or device moves, fetch weather for the real-time position
+  const lastGeoFetchRef = useRef<{ lat: number; lon: number } | null>(null);
+
+  useEffect(() => {
+    if (geo.latitude != null && geo.longitude != null) {
+      const prev = lastGeoFetchRef.current;
+      if (!prev || Math.abs(prev.lat - geo.latitude) > 0.001 || Math.abs(prev.lon - geo.longitude) > 0.001) {
+        lastGeoFetchRef.current = { lat: geo.latitude, lon: geo.longitude };
+        fetchLiveWeatherData(false, geo.latitude, geo.longitude);
+      }
+    }
+  }, [geo.latitude, geo.longitude, fetchLiveWeatherData]);
+
+  // Run initial prediction and live Open-Meteo weather fetch on load
   useEffect(() => {
     mountedRef.current = true;
+    // Execute immediate dynamic prediction for current sensor inputs
     executePrediction(demoSensorsRef.current);
+
+    fetchLiveWeatherData(true, geoRef.current.latitude ?? undefined, geoRef.current.longitude ?? undefined);
+
+    // Automatically refresh weather data every 30 seconds
+    const weatherTimer = setInterval(() => {
+      fetchLiveWeatherData(false, geoRef.current.latitude ?? undefined, geoRef.current.longitude ?? undefined);
+    }, 30000);
+
     return () => {
       mountedRef.current = false;
+      clearInterval(weatherTimer);
     };
-  }, [executePrediction]);
+  }, [fetchLiveWeatherData, executePrediction]);
 
   // 1-second countdown ticker
   useEffect(() => {
@@ -246,102 +330,167 @@ export default function DashboardPage() {
   // Sensor Adjustment Handlers (Invisible Two-Zone Controls)
   const handleDecreaseTemp = () => {
     hasUserModifiedSensors.current = true;
-    setDemoSensors((prev) => ({
-      ...prev,
-      temperature: Math.max(0, Math.round((prev.temperature - 1) * 10) / 10),
-    }));
+    setDemoSensors((prev) => {
+      const next = {
+        ...prev,
+        temperature: Math.max(0, Math.round((prev.temperature - 1) * 10) / 10),
+      };
+      demoSensorsRef.current = next;
+      executePrediction(next);
+      return next;
+    });
   };
 
   const handleIncreaseTemp = () => {
     hasUserModifiedSensors.current = true;
-    setDemoSensors((prev) => ({
-      ...prev,
-      temperature: Math.min(65, Math.round((prev.temperature + 1) * 10) / 10),
-    }));
+    setDemoSensors((prev) => {
+      const next = {
+        ...prev,
+        temperature: Math.min(65, Math.round((prev.temperature + 1) * 10) / 10),
+      };
+      demoSensorsRef.current = next;
+      executePrediction(next);
+      return next;
+    });
   };
 
   const handleDecreaseHum = () => {
     hasUserModifiedSensors.current = true;
-    setDemoSensors((prev) => ({
-      ...prev,
-      humidity: Math.max(0, Math.round((prev.humidity - 1) * 10) / 10),
-    }));
+    setDemoSensors((prev) => {
+      const next = {
+        ...prev,
+        humidity: Math.max(0, Math.round((prev.humidity - 1) * 10) / 10),
+      };
+      demoSensorsRef.current = next;
+      executePrediction(next);
+      return next;
+    });
   };
 
   const handleIncreaseHum = () => {
     hasUserModifiedSensors.current = true;
-    setDemoSensors((prev) => ({
-      ...prev,
-      humidity: Math.min(100, Math.round((prev.humidity + 1) * 10) / 10),
-    }));
+    setDemoSensors((prev) => {
+      const next = {
+        ...prev,
+        humidity: Math.min(100, Math.round((prev.humidity + 1) * 10) / 10),
+      };
+      demoSensorsRef.current = next;
+      executePrediction(next);
+      return next;
+    });
   };
 
   const handleDecreaseSoil = () => {
     hasUserModifiedSensors.current = true;
-    setDemoSensors((prev) => ({
-      ...prev,
-      soil_moisture: Math.max(0, Math.round((prev.soil_moisture - 1) * 10) / 10),
-    }));
+    setDemoSensors((prev) => {
+      const next = {
+        ...prev,
+        soil_moisture: Math.max(0, Math.round((prev.soil_moisture - 1) * 10) / 10),
+      };
+      demoSensorsRef.current = next;
+      executePrediction(next);
+      return next;
+    });
   };
 
   const handleIncreaseSoil = () => {
     hasUserModifiedSensors.current = true;
-    setDemoSensors((prev) => ({
-      ...prev,
-      soil_moisture: Math.min(100, Math.round((prev.soil_moisture + 1) * 10) / 10),
-    }));
+    setDemoSensors((prev) => {
+      const next = {
+        ...prev,
+        soil_moisture: Math.min(100, Math.round((prev.soil_moisture + 1) * 10) / 10),
+      };
+      demoSensorsRef.current = next;
+      executePrediction(next);
+      return next;
+    });
   };
 
   const handleDecreaseWind = () => {
     hasUserModifiedSensors.current = true;
-    setDemoSensors((prev) => ({
-      ...prev,
-      wind_speed: Math.max(0, Math.round((prev.wind_speed - 0.5) * 10) / 10),
-    }));
+    setDemoSensors((prev) => {
+      const next = {
+        ...prev,
+        wind_speed: Math.max(0, Math.round((prev.wind_speed - 0.5) * 10) / 10),
+      };
+      demoSensorsRef.current = next;
+      executePrediction(next);
+      return next;
+    });
   };
 
   const handleIncreaseWind = () => {
     hasUserModifiedSensors.current = true;
-    setDemoSensors((prev) => ({
-      ...prev,
-      wind_speed: Math.min(50, Math.round((prev.wind_speed + 0.5) * 10) / 10),
-    }));
+    setDemoSensors((prev) => {
+      const next = {
+        ...prev,
+        wind_speed: Math.min(50, Math.round((prev.wind_speed + 0.5) * 10) / 10),
+      };
+      demoSensorsRef.current = next;
+      executePrediction(next);
+      return next;
+    });
   };
 
   const handleDecreaseWindDir = () => {
     hasUserModifiedSensors.current = true;
     setDemoSensors((prev) => {
-      const next = (prev.wind_direction - 10 + 360) % 360;
-      return { ...prev, wind_direction: next };
+      const next = {
+        ...prev,
+        wind_direction: (prev.wind_direction - 10 + 360) % 360,
+      };
+      demoSensorsRef.current = next;
+      executePrediction(next);
+      return next;
     });
   };
 
   const handleIncreaseWindDir = () => {
     hasUserModifiedSensors.current = true;
     setDemoSensors((prev) => {
-      const next = (prev.wind_direction + 10) % 360;
-      return { ...prev, wind_direction: next };
+      const next = {
+        ...prev,
+        wind_direction: (prev.wind_direction + 10) % 360,
+      };
+      demoSensorsRef.current = next;
+      executePrediction(next);
+      return next;
     });
   };
 
   const handleDecreasePrecip = () => {
     hasUserModifiedSensors.current = true;
-    setDemoSensors((prev) => ({
-      ...prev,
-      precipitation: Math.max(0, Math.round((prev.precipitation - 0.1) * 10) / 10),
-    }));
+    setDemoSensors((prev) => {
+      const next = {
+        ...prev,
+        precipitation: Math.max(0, Math.round((prev.precipitation - 0.1) * 10) / 10),
+      };
+      demoSensorsRef.current = next;
+      executePrediction(next);
+      return next;
+    });
   };
 
   const handleIncreasePrecip = () => {
     hasUserModifiedSensors.current = true;
-    setDemoSensors((prev) => ({
-      ...prev,
-      precipitation: Math.round((prev.precipitation + 0.1) * 10) / 10,
-    }));
+    setDemoSensors((prev) => {
+      const next = {
+        ...prev,
+        precipitation: Math.round((prev.precipitation + 0.1) * 10) / 10,
+      };
+      demoSensorsRef.current = next;
+      executePrediction(next);
+      return next;
+    });
   };
 
   const effectiveRisk = predictedRisk || latest?.fire_risk || 'Low';
-  const effectiveConfidence = predictionConfidence ?? latest?.confidence ?? 0.95;
+  const effectiveConfidence =
+    predictionConfidence != null
+      ? predictionConfidence
+      : latest?.confidence != null && !predictedRisk
+      ? (latest.probability ?? latest.confidence)
+      : null;
 
   const isHighRisk = effectiveRisk.toUpperCase() === 'HIGH';
   const isEmergencyActive = isHighRisk && !isAlarmMuted;
@@ -465,12 +614,25 @@ export default function DashboardPage() {
         </div>
         <div className="header-actions">
           <LiveDateTimeBadge />
-          {stats?.last_updated && (
+          {lastWeatherUpdate ? (
+            <span className="live-weather-badge" title="Live weather data fetched from Open-Meteo API every 30s">
+              <span className="live-weather-dot" />
+              <span className="live-weather-text">LIVE</span>
+              <span className="live-weather-time">
+                {lastWeatherUpdate.toLocaleTimeString('en-US', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                  hour12: true,
+                })}
+              </span>
+            </span>
+          ) : stats?.last_updated ? (
             <span className="last-updated">
               <Clock size={14} />
               Updated {formatRelativeTime(stats.last_updated)}
             </span>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -588,8 +750,8 @@ export default function DashboardPage() {
           <div className="dashboard-map-wrapper">
             <FireMap
               currentSensor={{
-                latitude: latest?.latitude ?? 20.5937,
-                longitude: latest?.longitude ?? 78.9629,
+                latitude: geo.latitude ?? latest?.latitude ?? 20.5937,
+                longitude: geo.longitude ?? latest?.longitude ?? 78.9629,
                 wind_speed: demoSensors.wind_speed,
                 wind_direction: demoSensors.wind_direction,
                 fire_risk: effectiveRisk,
@@ -597,6 +759,8 @@ export default function DashboardPage() {
                 humidity: demoSensors.humidity,
                 soil_moisture: demoSensors.soil_moisture,
                 precipitation: demoSensors.precipitation,
+                isUserLocation: Boolean(geo.latitude != null && geo.longitude != null),
+                locationError: geo.error,
               }}
               onZoneSelect={setSelectedZone}
               selectedZoneId={selectedZone?.id}
@@ -933,6 +1097,11 @@ function FireRiskCard({
 
   const riskClass = isHigh ? 'risk-high' : isMedium ? 'risk-medium' : 'risk-low';
 
+  const confidencePercent =
+    confidence != null && !isNaN(confidence)
+      ? Math.round(confidence <= 1 ? confidence * 100 : confidence)
+      : null;
+
   const progressPercent = Math.min(
     100,
     Math.max(0, (countdown / Math.max(1, predictionInterval)) * 100)
@@ -947,7 +1116,7 @@ function FireRiskCard({
           </div>
           <div className="fire-risk-title-wrap">
             <span className="fire-risk-title">
-              FIRE RISK LEVEL {confidence != null ? `(${(confidence * 100).toFixed(0)}%)` : ''}
+              FIRE RISK LEVEL {confidencePercent != null ? `(${confidencePercent}%)` : ''}
             </span>
             <span className={`fire-risk-value ${riskClass}`}>
               {normalizedRisk}

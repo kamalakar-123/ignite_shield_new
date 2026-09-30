@@ -47,6 +47,8 @@ def predict_and_store(data: SensorData, db: Session = Depends(get_db)):
             fire_risk=prediction_result["fire_risk"],
             confidence=prediction_result["confidence"],
             probabilities=prediction_result["probabilities"],
+            prediction=prediction_result["prediction"],
+            probability=prediction_result["probability"],
         )
         
     except Exception as e:

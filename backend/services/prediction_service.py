@@ -48,20 +48,28 @@ def predict_risk(temperature: float, humidity: float, soil_moisture: float, wind
     class_indices = model.classes_
     class_names = label_encoder.inverse_transform(class_indices)
     
-    # Map class names to their probabilities
-    probabilities = {name: float(prob) for name, prob in zip(class_names, probabilities_raw)}
-    
+    # Map class names to their probabilities with both Title and UPPERCASE keys
+    probabilities = {}
+    for name, prob in zip(class_names, probabilities_raw):
+        val = round(float(prob), 4)
+        probabilities[name] = val
+        probabilities[name.upper()] = val
+
     # Predict the actual class (encoded)
     prediction_encoded = model.predict(input_data)[0]
-    
+
     # Decode to actual label
-    prediction_label = label_encoder.inverse_transform([prediction_encoded])[0]
-    
-    # Confidence is the probability of the predicted class
-    confidence = probabilities[prediction_label]
-    
+    prediction_label = str(label_encoder.inverse_transform([prediction_encoded])[0])
+    pred_upper = prediction_label.upper()
+
+    # Probability of the predicted class
+    pred_prob = probabilities.get(pred_upper, probabilities.get(prediction_label, float(probabilities_raw[0])))
+
     return {
+        "prediction": pred_upper,
         "fire_risk": prediction_label,
-        "confidence": confidence,
+        "probability": pred_prob,
+        "confidence": pred_prob,
         "probabilities": probabilities
     }
+

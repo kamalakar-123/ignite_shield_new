@@ -46,6 +46,8 @@ export interface CurrentSensorState {
   humidity?: number;
   soil_moisture?: number;
   precipitation?: number;
+  isUserLocation?: boolean;
+  locationError?: string | null;
 }
 
 interface FireMapProps {
@@ -107,42 +109,52 @@ function createFireOriginIcon(): L.DivIcon {
   });
 }
 
-// Active sensor icon by risk level
-function createActiveSensorIcon(risk: string): L.DivIcon {
+// Active sensor / user location icon by risk level
+function createActiveSensorIcon(risk: string, isUserLocation?: boolean): L.DivIcon {
   const normalized = risk.toUpperCase();
   if (normalized === 'HIGH') {
     return createFireOriginIcon();
   }
   const isMedium = normalized === 'MEDIUM';
-  const color = isMedium ? '#f59e0b' : '#22c55e';
-  const icon = isMedium ? '⚠️' : '📡';
+  const color = isMedium ? '#f59e0b' : isUserLocation ? '#38bdf8' : '#22c55e';
+  const icon = isMedium ? '⚠️' : isUserLocation ? '📍' : '📡';
   return L.divIcon({
     className: 'custom-sensor-marker',
     html: `
-      <div style="
-        width: 32px;
-        height: 32px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: ${color}25;
-        border: 2px solid ${color};
-        border-radius: 50%;
-        box-shadow: 0 0 12px ${color}80;
-        font-size: 15px;
-        line-height: 1;
-        backdrop-filter: blur(4px);
-        cursor: pointer;
-      ">
-        ${icon}
+      <div style="position: relative; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center;">
+        ${isUserLocation ? `<div style="
+          position: absolute;
+          inset: 0;
+          border-radius: 50%;
+          background: ${color}40;
+          animation: pulse-gps-ring 2s infinite ease-out;
+        "></div>` : ''}
+        <div style="
+          width: 32px;
+          height: 32px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(15, 23, 42, 0.88);
+          border: 2px solid ${color};
+          border-radius: 50%;
+          box-shadow: 0 0 14px ${color}90;
+          font-size: 15px;
+          line-height: 1;
+          backdrop-filter: blur(4px);
+          cursor: pointer;
+          z-index: 2;
+        ">
+          ${icon}
+        </div>
       </div>
     `,
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
+    iconSize: [38, 38],
+    iconAnchor: [19, 19],
   });
 }
 
-// Component to recenter map when data loads or when currentSensor is provided
+// Component to recenter map when data loads or when device/currentSensor position updates
 function MapAutoCenter({
   points,
   currentSensor,
@@ -151,29 +163,40 @@ function MapAutoCenter({
   currentSensor?: CurrentSensorState;
 }) {
   const map = useMap();
-  const hasCenteredRef = React.useRef(false);
+  const lastCoordsRef = React.useRef<{ lat: number; lng: number } | null>(null);
 
   React.useEffect(() => {
-    // Center on currentSensor on initial mount/availability
+    // Center on currentSensor on initial mount or when device coordinates change
     if (
       currentSensor &&
       currentSensor.latitude != null &&
-      currentSensor.longitude != null &&
-      !hasCenteredRef.current
+      currentSensor.longitude != null
     ) {
-      map.setView([currentSensor.latitude, currentSensor.longitude], 13, { animate: true });
-      hasCenteredRef.current = true;
+      const prev = lastCoordsRef.current;
+      // Recenter if first time or moved noticeably (> ~10 meters)
+      if (
+        !prev ||
+        Math.abs(prev.lat - currentSensor.latitude) > 0.0001 ||
+        Math.abs(prev.lng - currentSensor.longitude) > 0.0001
+      ) {
+        map.setView([currentSensor.latitude, currentSensor.longitude], prev ? map.getZoom() : 13, {
+          animate: true,
+        });
+        lastCoordsRef.current = {
+          lat: currentSensor.latitude,
+          lng: currentSensor.longitude,
+        };
+      }
       return;
     }
 
-    if (!hasCenteredRef.current) {
+    if (!lastCoordsRef.current) {
       const withCoords = points.filter((p) => p.latitude != null && p.longitude != null);
       if (withCoords.length > 0) {
         const bounds = L.latLngBounds(
           withCoords.map((p) => [p.latitude!, p.longitude!] as [number, number])
         );
         map.fitBounds(bounds, { padding: [50, 50], maxZoom: 12 });
-        hasCenteredRef.current = true;
       }
     }
   }, [points, currentSensor, map]);
@@ -346,14 +369,17 @@ export default function FireMap({
             ============================================================ */}
         {currentSensor && (
           <React.Fragment key="current-sensor-layer">
-            {/* Sensor Origin Marker */}
+            {/* Sensor Origin / Your Location Marker */}
             <Marker
               position={[currentSensor.latitude, currentSensor.longitude]}
-              icon={createActiveSensorIcon(currentSensor.fire_risk)}
+              icon={createActiveSensorIcon(currentSensor.fire_risk, currentSensor.isUserLocation)}
             >
               <Popup>
                 <div className="map-popup">
-                  <h4>{isCurrentHigh ? '🔥 FIRE ORIGIN' : '📡 MONITORED SENSOR'}</h4>
+                  <h4>{isCurrentHigh ? '🔥 FIRE ORIGIN' : currentSensor.isUserLocation ? '📍 YOUR LOCATION' : '📡 MONITORED SENSOR'}</h4>
+                  <div className="popup-coords" style={{ fontSize: '11px', color: '#38bdf8', marginBottom: '6px', fontWeight: 600 }}>
+                    Lat: {currentSensor.latitude.toFixed(5)}°, Lon: {currentSensor.longitude.toFixed(5)}°
+                  </div>
                   <div
                     className="popup-risk"
                     style={{
@@ -382,7 +408,11 @@ export default function FireMap({
                 </div>
               </Popup>
               <Tooltip direction="top" offset={[0, -18]}>
-                {isCurrentHigh ? 'Fire Origin (High Risk)' : `Sensor Station (${currentSensor.fire_risk})`}
+                {currentSensor.isUserLocation
+                  ? `Your Location (${currentSensor.latitude.toFixed(4)}°, ${currentSensor.longitude.toFixed(4)}°)`
+                  : isCurrentHigh
+                  ? 'Fire Origin (High Risk)'
+                  : `Sensor Station (${currentSensor.fire_risk})`}
               </Tooltip>
             </Marker>
 
@@ -623,6 +653,24 @@ export default function FireMap({
           </React.Fragment>
         ))}
       </MapContainer>
+
+      {/* Real-time GPS status overlay badge */}
+      {currentSensor && (
+        <div className="map-gps-indicator">
+          <span className={`map-gps-dot ${currentSensor.isUserLocation ? 'active' : 'fallback'}`} />
+          <span className="map-gps-label">
+            {currentSensor.isUserLocation ? 'Your Location:' : 'Location:'}
+          </span>
+          <span className="map-gps-coords">
+            {currentSensor.latitude.toFixed(4)}°, {currentSensor.longitude.toFixed(4)}°
+          </span>
+          {currentSensor.locationError && (
+            <span className="map-gps-error" title={currentSensor.locationError}>
+              ({currentSensor.locationError})
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Map Legend */}
       <div className="map-legend">

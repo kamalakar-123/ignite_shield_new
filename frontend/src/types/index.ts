@@ -22,6 +22,8 @@ export interface PredictionResponse {
   fire_risk: string;
   confidence: number;
   probabilities: Record<string, number>;
+  prediction?: string;
+  probability?: number;
 }
 
 export interface ReadingResponse {
@@ -38,6 +40,9 @@ export interface ReadingResponse {
   fire_risk: string;
   confidence: number;
   created_at: string;
+  prediction?: string;
+  probability?: number;
+  probabilities?: Record<string, number>;
 }
 
 // Dashboard

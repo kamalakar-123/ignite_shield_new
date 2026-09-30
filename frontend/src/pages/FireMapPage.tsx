@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import { Map, Filter, Search, X } from 'lucide-react';
 import FireMap from '../components/map/FireMap';
 import ZonePanel from '../components/map/ZonePanel';
+import { useGeolocation } from '../hooks/useGeolocation';
 import type { RiskMapPoint } from '../types';
 
 export default function FireMapPage() {
+  const geo = useGeolocation();
   const [selectedZone, setSelectedZone] = useState<RiskMapPoint | null>(null);
   const [riskFilter, setRiskFilter] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -68,6 +70,19 @@ export default function FireMapPage() {
       <div className="map-layout">
         <FireMap
           fullScreen
+          currentSensor={
+            geo.latitude != null && geo.longitude != null
+              ? {
+                  latitude: geo.latitude,
+                  longitude: geo.longitude,
+                  wind_speed: 3.0,
+                  wind_direction: 120.0,
+                  fire_risk: 'Low',
+                  isUserLocation: true,
+                  locationError: geo.error,
+                }
+              : undefined
+          }
           onZoneSelect={setSelectedZone}
           selectedZoneId={selectedZone?.id}
           riskFilter={riskFilter.length > 0 ? riskFilter : undefined}
