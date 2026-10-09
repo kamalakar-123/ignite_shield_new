@@ -1,3 +1,41 @@
+```gitignore
+# Environment variables and secrets
 .env
+.env.*
+!.env.example
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+venv/
+.venv/
+env/
+
+# Test and cache files
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Frontend
+node_modules/
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# IDE and operating system
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Database backups
+*.sql
+*.dump
+*.bak
