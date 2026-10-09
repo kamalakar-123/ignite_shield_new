@@ -1,13 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Header
 from sqlalchemy.orm import Session
 from sqlalchemy import func as sql_func, desc
 from typing import List, Optional
 from datetime import datetime, timedelta
 import csv
 import io
+import logging
 
 from database import get_db
 from models import SensorPrediction, Alert
+from config import settings
 from schemas import (
     DashboardStats, AlertResponse, AlertAcknowledge, EmailTestResponse,
     SMSTestResponse, WhatsAppTestResponse, MultiChannelTestResponse, ChannelTestResult,
@@ -15,10 +17,40 @@ from schemas import (
 )
 from services.email_service import send_email_test_alert
 from services.twilio_service import send_sms_test_alert, send_whatsapp_test_alert
-from services.notification_service import dispatch_all_notifications
+from services.notification_service import dispatch_all_notifications, dispatch_acknowledgement_notification
 
-
+logger = logging.getLogger("ignite_shield.dashboard")
 router = APIRouter()
+
+
+def verify_admin_authorization(
+    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+):
+    """Enforces authorization on manual alert testing endpoints."""
+    if not settings.ADMIN_API_KEY:
+        return True
+    if x_admin_key and x_admin_key == settings.ADMIN_API_KEY:
+        return True
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ")[1]
+        if token == settings.ADMIN_API_KEY or token == settings.JWT_SECRET_KEY:
+            return True
+    logger.warning("[Security] Unauthorized manual test alert trigger attempt rejected.")
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Unauthorized: Admin access required to dispatch test notifications. Set X-Admin-Key header."
+    )
+
+
+def _enrich_alert(a: Alert) -> AlertResponse:
+    map_url = None
+    if a.latitude is not None and a.longitude is not None:
+        map_url = f"https://maps.google.com/?q={a.latitude:.4f},{a.longitude:.4f}"
+    res = AlertResponse.model_validate(a)
+    res.map_url = map_url
+    return res
+
 
 
 # ============================================================
@@ -91,7 +123,7 @@ def get_alerts(
         query = query.filter(Alert.risk_level == risk_level)
     
     alerts = query.limit(limit).all()
-    return alerts
+    return [_enrich_alert(a) for a in alerts]
 
 
 @router.get("/alerts/latest", response_model=Optional[AlertResponse])
@@ -108,12 +140,15 @@ def get_latest_alert(db: Session = Depends(get_db)):
         # Fallback to the latest alert of any severity
         alert = db.query(Alert).order_by(desc(Alert.created_at)).first()
 
-    return alert
+    return _enrich_alert(alert) if alert else None
 
 
 @router.post("/alerts/test", response_model=EmailTestResponse, status_code=status.HTTP_200_OK)
 @router.post("/alerts/test-email", response_model=EmailTestResponse, status_code=status.HTTP_200_OK)
-def trigger_test_email_alert(db: Session = Depends(get_db)):
+def trigger_test_email_alert(
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(verify_admin_authorization)
+):
     """
     Manual testing endpoint:
     Sends a test Email alert via Gmail SMTP to verify configuration
@@ -159,7 +194,10 @@ def trigger_test_email_alert(db: Session = Depends(get_db)):
 
 
 @router.post("/alerts/test-sms", response_model=SMSTestResponse, status_code=status.HTTP_200_OK)
-def trigger_test_sms_alert(db: Session = Depends(get_db)):
+def trigger_test_sms_alert(
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(verify_admin_authorization)
+):
     """
     Manual testing endpoint:
     Sends a test SMS alert via Twilio to verify SMS configuration and delivery.
@@ -206,7 +244,10 @@ def trigger_test_sms_alert(db: Session = Depends(get_db)):
 
 
 @router.post("/alerts/test-whatsapp", response_model=WhatsAppTestResponse, status_code=status.HTTP_200_OK)
-def trigger_test_whatsapp_alert(db: Session = Depends(get_db)):
+def trigger_test_whatsapp_alert(
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(verify_admin_authorization)
+):
     """
     Manual testing endpoint:
     Sends a test WhatsApp alert via Twilio to verify WhatsApp configuration and sandbox status.
@@ -254,7 +295,10 @@ def trigger_test_whatsapp_alert(db: Session = Depends(get_db)):
 
 @router.post("/alerts/test-all", response_model=MultiChannelTestResponse, status_code=status.HTTP_200_OK)
 @router.post("/alerts/test-channels", response_model=MultiChannelTestResponse, status_code=status.HTTP_200_OK)
-def trigger_test_all_channels(db: Session = Depends(get_db)):
+def trigger_test_all_channels(
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(verify_admin_authorization)
+):
     """
     Manual testing endpoint:
     Dispatches test alerts across ALL THREE channels simultaneously:
@@ -332,13 +376,30 @@ def trigger_test_all_channels(db: Session = Depends(get_db)):
 
 @router.put("/alerts/{alert_id}/acknowledge")
 def acknowledge_alert(alert_id: int, db: Session = Depends(get_db)):
-    """Acknowledge an alert."""
+    """Acknowledge an alert and dispatch acknowledgement notifications."""
     alert = db.query(Alert).filter(Alert.id == alert_id).first()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
     alert.is_acknowledged = True
     db.commit()
-    return {"status": "acknowledged", "alert_id": alert_id}
+
+    # Dispatch acknowledgement notification via WhatsApp / SMS / Email
+    loc_str = alert.location or (f"Lat: {alert.latitude:.4f}, Lon: {alert.longitude:.4f}" if alert.latitude and alert.longitude else "Forest Sector Alpha")
+    ack_res = None
+    try:
+        ack_res = dispatch_acknowledgement_notification(
+            incident_id=alert.id,
+            location=loc_str,
+            acknowledged_by="Forest Command Center"
+        )
+    except Exception as e:
+        logger.error(f"Error sending acknowledgement notification for alert {alert_id}: {e}")
+
+    return {
+        "status": "acknowledged",
+        "alert_id": alert_id,
+        "notification_dispatched": ack_res is not None and bool(ack_res.get("whatsapp", {}).get("success", False))
+    }
 
 
 def _auto_generate_alerts(db: Session):

@@ -152,8 +152,43 @@ export interface AlertResponse {
   whatsapp_recipient?: string | null;
   whatsapp_message_sid?: string | null;
   whatsapp_error?: string | null;
+  device_id?: string | null;
+  map_url?: string | null;
   is_acknowledged: boolean;
   created_at: string;
+}
+
+// IoT Devices
+export interface DeviceResponse {
+  device_id: string;
+  device_name?: string | null;
+  status: string; // online, offline, degraded
+  last_seen: string | null;
+  firmware_version?: string | null;
+  battery_level?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  location_name?: string | null;
+  is_active: boolean;
+}
+
+// AI Assistant
+export interface AIChatRequest {
+  message: string;
+  station_id?: string;
+  latitude?: number;
+  longitude?: number;
+}
+
+export interface AIChatResponse {
+  success: boolean;
+  answer: string;
+  measured_facts: Record<string, any>;
+  external_weather?: Record<string, any> | null;
+  recommendations: string[];
+  data_freshness_seconds?: number | null;
+  timestamp: string;
+  provider: string;
 }
 
 export interface ChannelTestResult {

@@ -12,6 +12,9 @@ import {
   Activity,
   Wind,
   Info,
+  MapPin,
+  Cpu,
+  ExternalLink,
 } from 'lucide-react';
 import { usePolling } from '../hooks/usePolling';
 import { alertsApi } from '../services/api';
@@ -368,6 +371,23 @@ export default function AlertsPage() {
                       </span>
                       <span className="alert-risk-level">{displayRisk}</span>
                       {alert.zone_name && <span className="alert-zone">📍 {alert.zone_name}</span>}
+                      {alert.device_id && (
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            padding: '2px 7px',
+                            borderRadius: '5px',
+                            background: 'rgba(148, 163, 184, 0.15)',
+                            color: '#cbd5e1',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                          }}
+                        >
+                          <Cpu size={11} /> {alert.device_id}
+                        </span>
+                      )}
 
                       {/* ----------------- Multi-Channel Status Badges ----------------- */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto', flexWrap: 'wrap' }}>
@@ -543,10 +563,28 @@ export default function AlertsPage() {
                     )}
 
                     <p className="alert-message">{alert.message}</p>
-                    <div className="alert-card-footer">
+                    <div className="alert-card-footer" style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                       <span className="alert-time" title={formatDateTime(alert.created_at)}>
                         {formatRelativeTime(alert.created_at)}
                       </span>
+                      {(alert.map_url || (alert.latitude && alert.longitude)) && (
+                        <a
+                          href={alert.map_url || `https://www.google.com/maps/search/?api=1&query=${alert.latitude},${alert.longitude}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            fontSize: '12px',
+                            color: '#38bdf8',
+                            textDecoration: 'none',
+                            fontWeight: 500,
+                          }}
+                        >
+                          <MapPin size={12} /> View on Map <ExternalLink size={10} />
+                        </a>
+                      )}
                       {alert.is_acknowledged && (
                         <span className="alert-ack-badge">
                           <Check size={12} /> Acknowledged

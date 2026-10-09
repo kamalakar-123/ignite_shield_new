@@ -23,6 +23,11 @@ def dispatch_all_notifications(
     email_recipient: Optional[str] = None,
     sms_recipient: Optional[str] = None,
     whatsapp_recipient: Optional[str] = None,
+    incident_id: Optional[int] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    wind_direction: Optional[float] = None,
+    precipitation: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Coordinates simultaneous dispatch of all three notification channels:
@@ -129,6 +134,11 @@ def dispatch_all_notifications(
             location=location,
             timestamp=time_str,
             recipient_override=whatsapp_recipient,
+            incident_id=incident_id,
+            latitude=latitude,
+            longitude=longitude,
+            wind_direction=wind_direction,
+            precipitation=precipitation,
         )
         logger.info("[Notification Coordinator] WhatsApp channel completed: status=%s", whatsapp_result.get("status"))
     except Exception as exc:
@@ -160,6 +170,10 @@ def _async_notification_dispatcher(
     confidence: Optional[float],
     location: str,
     timestamp_str: str,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    wind_direction: Optional[float] = None,
+    precipitation: Optional[float] = None,
 ):
     """
     Background worker thread to dispatch all 3 channels without blocking ESP32 telemetry ingestion.
@@ -178,6 +192,11 @@ def _async_notification_dispatcher(
             confidence=confidence,
             location=location,
             timestamp=timestamp_str,
+            incident_id=alert_id,
+            latitude=latitude,
+            longitude=longitude,
+            wind_direction=wind_direction,
+            precipitation=precipitation,
         )
 
         alert_record = db.query(Alert).filter(Alert.id == alert_id).first()
@@ -387,6 +406,8 @@ def process_risk_alert_state(
                         conf_pct,
                         location_str,
                         time_str,
+                        latitude,
+                        longitude,
                     ),
                     daemon=True,
                 )
@@ -410,6 +431,9 @@ def process_risk_alert_state(
                     confidence=conf_pct,
                     location=location_str,
                     timestamp=time_str,
+                    incident_id=alert_record.id,
+                    latitude=latitude,
+                    longitude=longitude,
                 )
                 if alert_record:
                     try:
@@ -465,3 +489,44 @@ def process_risk_alert_state(
             "whatsapp": {"status": "SKIPPED"},
             "error": None,
         }
+
+
+def dispatch_acknowledgement_notification(
+    incident_id: int,
+    acknowledged_by: str = "Forest Duty Officer",
+    location: str = "Forest Sector Alpha",
+) -> Dict[str, Any]:
+    """Dispatches a WhatsApp acknowledgement message when an alert is acknowledged."""
+    from services.twilio_service import send_whatsapp_acknowledgement_alert
+    try:
+        return send_whatsapp_acknowledgement_alert(
+            incident_id=incident_id,
+            acknowledged_by=acknowledged_by,
+            location=location,
+        )
+    except Exception as exc:
+        logger.error("[Ack Notification] Error dispatching ack message: %s", exc)
+        return {"success": False, "status": "FAILED", "error": str(exc)}
+
+
+def dispatch_recovery_notification(
+    incident_id: int,
+    temperature: float,
+    humidity: float,
+    soil_moisture: float,
+    location: str = "Forest Sector Alpha",
+) -> Dict[str, Any]:
+    """Dispatches a WhatsApp recovery notification when fire hazard conditions normalize."""
+    from services.twilio_service import send_whatsapp_recovery_alert
+    try:
+        return send_whatsapp_recovery_alert(
+            incident_id=incident_id,
+            temperature=temperature,
+            humidity=humidity,
+            soil_moisture=soil_moisture,
+            location=location,
+        )
+    except Exception as exc:
+        logger.error("[Recovery Notification] Error dispatching recovery message: %s", exc)
+        return {"success": False, "status": "FAILED", "error": str(exc)}
+

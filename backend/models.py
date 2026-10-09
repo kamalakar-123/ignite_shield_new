@@ -6,9 +6,13 @@ class SensorReading(Base):
     __tablename__ = "sensor_readings"
 
     id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(String, nullable=True, default="ESP32-NODE-01")
     temperature = Column(Float, nullable=False)
     humidity = Column(Float, nullable=False)
     soil_moisture = Column(Float, nullable=False)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    battery_level = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     @property
@@ -18,9 +22,13 @@ class SensorReading(Base):
     def to_dict(self):
         return {
             "id": self.id,
+            "device_id": self.device_id or "ESP32-NODE-01",
             "temperature": self.temperature,
             "humidity": self.humidity,
             "soil_moisture": self.soil_moisture,
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "battery_level": self.battery_level,
             "timestamp": self.created_at.isoformat() if self.created_at else None
         }
 
@@ -113,6 +121,36 @@ class Alert(Base):
     whatsapp_recipient = Column(String, nullable=True)
     whatsapp_message_sid = Column(String, nullable=True)
     whatsapp_error = Column(String, nullable=True)
+    device_id = Column(String, nullable=True, default="ESP32-NODE-01")
     is_acknowledged = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Device(Base):
+    __tablename__ = "devices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(String, unique=True, index=True, nullable=False)
+    station_name = Column(String, nullable=True, default="Forest Sector Alpha Station")
+    latitude = Column(Float, nullable=True, default=12.2958)
+    longitude = Column(Float, nullable=True, default=76.6394)
+    firmware_version = Column(String, nullable=True, default="v1.2.0")
+    battery_level = Column(Float, nullable=True, default=100.0)
+    status = Column(String, default="online")  # online | offline | degraded
+    last_seen = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "device_id": self.device_id,
+            "station_name": self.station_name,
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "firmware_version": self.firmware_version,
+            "battery_level": self.battery_level,
+            "status": self.status,
+            "last_seen": self.last_seen.isoformat() if self.last_seen else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
 

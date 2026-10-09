@@ -1,7 +1,7 @@
-```gitignore
 # Environment variables and secrets
 .env
 .env.*
+.env.local
 !.env.example
 
 # Python
@@ -24,6 +24,7 @@ htmlcov/
 node_modules/
 dist/
 build/
+.vite/
 
 # Logs
 *.log
@@ -35,7 +36,11 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Database backups
+# Database files & backups
+*.db
+*.sqlite
+*.sqlite3
 *.sql
 *.dump
 *.bak
+ignite_shield.db

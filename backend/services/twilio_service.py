@@ -102,27 +102,95 @@ def generate_whatsapp_text(
     confidence: Optional[float] = None,
     location: str = "Forest Sector Alpha",
     timestamp: Optional[str] = None,
+    incident_id: Optional[int] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    wind_direction: Optional[float] = None,
+    precipitation: Optional[float] = None,
 ) -> str:
-    """Generates formatted WhatsApp alert message with rich markdown and structure."""
+    """Generates formatted WhatsApp alert message with rich markdown, incident ID, maps, and weather."""
     time_display = timestamp or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     conf_str = f"{confidence:.1f}%" if confidence is not None else "High"
+    incident_header = f"🚨 *Incident ID:* #{incident_id}\n" if incident_id else ""
+
+    weather_extra = ""
+    if wind_direction is not None and wind_direction > 0:
+        weather_extra += f"• 🧭 Wind Direction: *{wind_direction:.0f}°*\n"
+    if precipitation is not None and precipitation > 0:
+        weather_extra += f"• 🌧 Precipitation: *{precipitation:.1f} mm*\n"
+
+    map_section = ""
+    if latitude is not None and longitude is not None:
+        map_section = f"🗺️ *Live Incident Map:* https://maps.google.com/?q={latitude:.4f},{longitude:.4f}\n"
+
     return (
         f"🔥 *IGNITE SHIELD - Forest Fire Alert* 🔥\n"
         f"=================================\n"
+        f"{incident_header}"
         f"⚠️ *Status:* *{risk_level} FOREST FIRE RISK DETECTED*\n"
         f"🤖 *Model Confidence:* {conf_str}\n\n"
         f"📊 *Live Sensor Readings:*\n"
         f"• 🌡 Temperature: *{temperature:.1f} °C*\n"
         f"• 💧 Relative Humidity: *{humidity:.1f} %*\n"
         f"• 🌱 Soil Moisture: *{soil_moisture:.1f} %*\n"
-        f"• 💨 Wind Speed: *{wind_speed:.1f} m/s*\n\n"
+        f"• 💨 Wind Speed: *{wind_speed:.1f} m/s*\n"
+        f"{weather_extra}\n"
         f"📍 *Location:* {location}\n"
+        f"{map_section}"
         f"🕒 *Timestamp:* {time_display}\n\n"
         f"⚠️ *Recommended Action:*\n"
         f"Verify reported telemetry and deploy ground inspection immediately to prevent fire spread.\n"
         f"=================================\n"
         f"_Automated emergency notification from IGNITE SHIELD Early Warning System._"
     )
+
+
+def generate_whatsapp_acknowledgement_text(
+    incident_id: int,
+    acknowledged_by: str = "Forest Duty Officer",
+    location: str = "Forest Sector Alpha",
+    timestamp: Optional[str] = None,
+) -> str:
+    """Generates WhatsApp alert acknowledgement message."""
+    time_display = timestamp or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return (
+        f"✅ *IGNITE SHIELD - Incident Acknowledged* ✅\n"
+        f"=================================\n"
+        f"🚨 *Incident ID:* #{incident_id}\n"
+        f"📍 *Location:* {location}\n"
+        f"👤 *Acknowledged By:* {acknowledged_by}\n"
+        f"🕒 *Timestamp:* {time_display}\n\n"
+        f"Ground response team has been alerted and telemetry verification is underway.\n"
+        f"=================================\n"
+        f"_Ignite Shield Incident Response Command._"
+    )
+
+
+def generate_whatsapp_recovery_text(
+    incident_id: int,
+    temperature: float,
+    humidity: float,
+    soil_moisture: float,
+    location: str = "Forest Sector Alpha",
+    timestamp: Optional[str] = None,
+) -> str:
+    """Generates WhatsApp incident recovery / hazard cleared message."""
+    time_display = timestamp or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return (
+        f"🟢 *IGNITE SHIELD - Hazard Cleared / Recovered* 🟢\n"
+        f"=================================\n"
+        f"🚨 *Incident ID:* #{incident_id}\n"
+        f"📍 *Location:* {location}\n"
+        f"📊 *Current Sensor Status:*\n"
+        f"• 🌡 Temperature: *{temperature:.1f} °C*\n"
+        f"• 💧 Relative Humidity: *{humidity:.1f} %*\n"
+        f"• 🌱 Soil Moisture: *{soil_moisture:.1f} %*\n"
+        f"🕒 *Timestamp:* {time_display}\n\n"
+        f"Telemetry indicates fire hazard parameters have returned below alert thresholds.\n"
+        f"=================================\n"
+        f"_Ignite Shield Early Warning System._"
+    )
+
 
 
 def send_sms_alert(
@@ -262,9 +330,14 @@ def send_whatsapp_alert(
     timestamp: Optional[str] = None,
     recipient_override: Optional[str] = None,
     sender_override: Optional[str] = None,
+    incident_id: Optional[int] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    wind_direction: Optional[float] = None,
+    precipitation: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
-    Sends an automated WhatsApp alert via Twilio.
+    Sends an automated WhatsApp alert via Twilio with retry handling and metadata.
     CRITICAL: Only sends if risk_level == 'HIGH'.
 
     Returns:
@@ -331,68 +404,158 @@ def send_whatsapp_alert(
         confidence=confidence,
         location=location,
         timestamp=timestamp,
+        incident_id=incident_id,
+        latitude=latitude,
+        longitude=longitude,
+        wind_direction=wind_direction,
+        precipitation=precipitation,
+    )
+
+    max_attempts = 2
+    last_error = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            logger.info("[WhatsApp] Attempt %d: Dispatching to %s...", attempt, to_number)
+            client = Client(account_sid, auth_token)
+
+            if content_sid:
+                content_vars = json.dumps({
+                    "1": f"{temperature:.1f}",
+                    "2": f"{humidity:.1f}",
+                    "3": f"{soil_moisture:.1f}",
+                    "4": f"{wind_speed:.1f}",
+                    "5": location,
+                })
+                message = client.messages.create(
+                    from_=from_number,
+                    to=to_number,
+                    content_sid=content_sid,
+                    content_variables=content_vars,
+                )
+            else:
+                message = client.messages.create(
+                    body=wa_body,
+                    from_=from_number,
+                    to=to_number,
+                )
+
+            msg_sid = getattr(message, "sid", None)
+            msg_status = getattr(message, "status", "sent").upper()
+            logger.info("[WhatsApp] Twilio accepted WhatsApp. SID: %s, Status: %s", msg_sid, msg_status)
+
+            return {
+                "success": True,
+                "status": "SENT",
+                "recipient": to_number,
+                "message_sid": msg_sid,
+                "error": None,
+            }
+
+        except TwilioRestException as exc:
+            raw_err = f"Twilio Error {exc.code}: {exc.msg}"
+            safe_err = _sanitize_error_message(raw_err, auth_token, account_sid)
+            logger.error("[WhatsApp] Twilio REST Exception: %s", safe_err)
+            return {
+                "success": False,
+                "status": "FAILED",
+                "recipient": to_number,
+                "message_sid": None,
+                "error": safe_err,
+            }
+        except Exception as exc:
+            raw_err = f"WhatsApp Delivery Exception: {str(exc)}"
+            safe_err = _sanitize_error_message(raw_err, auth_token, account_sid)
+            last_error = safe_err
+            if attempt < max_attempts:
+                logger.warning("[WhatsApp] Delivery attempt %d failed: %s. Retrying...", attempt, safe_err)
+
+    return {
+        "success": False,
+        "status": "FAILED",
+        "recipient": to_number,
+        "message_sid": None,
+        "error": last_error or "Delivery failed after retries",
+    }
+
+
+def send_whatsapp_acknowledgement_alert(
+    incident_id: int,
+    acknowledged_by: str = "Forest Duty Officer",
+    location: str = "Forest Sector Alpha",
+    recipient_override: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Sends a WhatsApp confirmation that an incident was acknowledged."""
+    cfg = _get_twilio_config()
+    account_sid = cfg["account_sid"]
+    auth_token = cfg["auth_token"]
+    from_number = cfg["whatsapp_from"]
+    to_number = recipient_override or cfg["whatsapp_to"]
+
+    if not account_sid or not auth_token or not from_number or not to_number:
+        return {"success": False, "status": "FAILED", "error": "Twilio configuration incomplete"}
+
+    if not from_number.startswith("whatsapp:"):
+        from_number = f"whatsapp:{from_number}"
+    if not to_number.startswith("whatsapp:"):
+        to_number = f"whatsapp:{to_number}"
+
+    msg_body = generate_whatsapp_acknowledgement_text(
+        incident_id=incident_id,
+        acknowledged_by=acknowledged_by,
+        location=location,
     )
 
     try:
-        logger.info("[WhatsApp] Dispatching Twilio WhatsApp from %s to %s...", from_number, to_number)
         client = Client(account_sid, auth_token)
-
-        # If user configured a specific Content SID, use content template
-        if content_sid:
-            content_vars = json.dumps({
-                "1": f"{temperature:.1f}",
-                "2": f"{humidity:.1f}",
-                "3": f"{soil_moisture:.1f}",
-                "4": f"{wind_speed:.1f}",
-                "5": location,
-            })
-            message = client.messages.create(
-                from_=from_number,
-                to=to_number,
-                content_sid=content_sid,
-                content_variables=content_vars,
-            )
-        else:
-            message = client.messages.create(
-                body=wa_body,
-                from_=from_number,
-                to=to_number,
-            )
-
-        msg_sid = getattr(message, "sid", None)
-        msg_status = getattr(message, "status", "sent").upper()
-        logger.info("[WhatsApp] Twilio accepted WhatsApp. SID: %s, Status: %s", msg_sid, msg_status)
-
-        return {
-            "success": True,
-            "status": "SENT",
-            "recipient": to_number,
-            "message_sid": msg_sid,
-            "error": None,
-        }
-
-    except TwilioRestException as exc:
-        raw_err = f"Twilio Error {exc.code}: {exc.msg}"
-        safe_err = _sanitize_error_message(raw_err, auth_token, account_sid)
-        logger.error("[WhatsApp] Twilio REST Exception: %s", safe_err)
-        return {
-            "success": False,
-            "status": "FAILED",
-            "recipient": to_number,
-            "message_sid": None,
-            "error": safe_err,
-        }
+        message = client.messages.create(body=msg_body, from_=from_number, to=to_number)
+        return {"success": True, "status": "SENT", "recipient": to_number, "message_sid": getattr(message, "sid", None), "error": None}
     except Exception as exc:
-        raw_err = f"WhatsApp Delivery Exception: {str(exc)}"
-        safe_err = _sanitize_error_message(raw_err, auth_token, account_sid)
-        logger.error("[WhatsApp] General Exception: %s", safe_err)
-        return {
-            "success": False,
-            "status": "FAILED",
-            "recipient": to_number,
-            "message_sid": None,
-            "error": safe_err,
-        }
+        safe_err = _sanitize_error_message(str(exc), auth_token, account_sid)
+        logger.error("[WhatsApp Ack] Error: %s", safe_err)
+        return {"success": False, "status": "FAILED", "recipient": to_number, "error": safe_err}
+
+
+def send_whatsapp_recovery_alert(
+    incident_id: int,
+    temperature: float,
+    humidity: float,
+    soil_moisture: float,
+    location: str = "Forest Sector Alpha",
+    recipient_override: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Sends a WhatsApp confirmation that conditions have returned to normal / recovered."""
+    cfg = _get_twilio_config()
+    account_sid = cfg["account_sid"]
+    auth_token = cfg["auth_token"]
+    from_number = cfg["whatsapp_from"]
+    to_number = recipient_override or cfg["whatsapp_to"]
+
+    if not account_sid or not auth_token or not from_number or not to_number:
+        return {"success": False, "status": "FAILED", "error": "Twilio configuration incomplete"}
+
+    if not from_number.startswith("whatsapp:"):
+        from_number = f"whatsapp:{from_number}"
+    if not to_number.startswith("whatsapp:"):
+        to_number = f"whatsapp:{to_number}"
+
+    msg_body = generate_whatsapp_recovery_text(
+        incident_id=incident_id,
+        temperature=temperature,
+        humidity=humidity,
+        soil_moisture=soil_moisture,
+        location=location,
+    )
+
+    try:
+        client = Client(account_sid, auth_token)
+        message = client.messages.create(body=msg_body, from_=from_number, to=to_number)
+        return {"success": True, "status": "SENT", "recipient": to_number, "message_sid": getattr(message, "sid", None), "error": None}
+    except Exception as exc:
+        safe_err = _sanitize_error_message(str(exc), auth_token, account_sid)
+        logger.error("[WhatsApp Recovery] Error: %s", safe_err)
+        return {"success": False, "status": "FAILED", "recipient": to_number, "error": safe_err}
+
 
 
 def send_sms_test_alert(

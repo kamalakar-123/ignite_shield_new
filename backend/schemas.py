@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
 from datetime import datetime
 
 # ============================================================
@@ -10,19 +10,47 @@ class ESP32SensorReading(BaseModel):
     temperature: float
     humidity: float
     soil_moisture: float
+    device_id: Optional[str] = "ESP32-NODE-01"
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    battery_level: Optional[float] = None
+    device_status: Optional[str] = "online"
+    timestamp: Optional[datetime] = None
 
 class ESP32SensorResponse(BaseModel):
     success: bool = True
     message: str = "Sensor data received successfully"
     data: Optional[ESP32SensorReading] = None
     sensor_data: Optional[ESP32SensorReading] = None
+    device_id: Optional[str] = "ESP32-NODE-01"
+    fire_risk: Optional[str] = None
+    confidence: Optional[float] = None
     timestamp: Optional[datetime] = None
 
 class LatestSensorReadingResponse(BaseModel):
     temperature: float
     humidity: float
     soil_moisture: float
+    device_id: Optional[str] = "ESP32-NODE-01"
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    battery_level: Optional[float] = None
     timestamp: Optional[str] = None
+
+class DeviceResponse(BaseModel):
+    id: int
+    device_id: str
+    station_name: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    firmware_version: Optional[str] = None
+    battery_level: Optional[float] = None
+    status: str
+    last_seen: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
 
 class PredictionRequest(BaseModel):
     temperature: Optional[float] = None
@@ -153,6 +181,8 @@ class AlertResponse(BaseModel):
     whatsapp_recipient: Optional[str] = None
     whatsapp_message_sid: Optional[str] = None
     whatsapp_error: Optional[str] = None
+    device_id: Optional[str] = "ESP32-NODE-01"
+    map_url: Optional[str] = None
     is_acknowledged: bool
     created_at: datetime
 
@@ -260,3 +290,24 @@ class ExportRequest(BaseModel):
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     limit: Optional[int] = None
+
+# ============================================================
+# AI Assistant Schemas
+# ============================================================
+
+class AIChatRequest(BaseModel):
+    message: str
+    station_id: Optional[str] = "ESP32-NODE-01"
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+class AIChatResponse(BaseModel):
+    success: bool
+    answer: str
+    measured_facts: Dict[str, Any]
+    external_weather: Optional[Dict[str, Any]] = None
+    recommendations: List[str]
+    data_freshness_seconds: Optional[float] = None
+    timestamp: datetime
+    provider: str
+

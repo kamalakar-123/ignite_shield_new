@@ -1,0 +1,48 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ignite-shield-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./ignite_shield.db
+      - DEVICE_API_KEY=${DEVICE_API_KEY:-ignite-device-token-secret}
+      - ADMIN_API_KEY=${ADMIN_API_KEY:-ignite-admin-token-secret}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-ignite-jwt-secret-key}
+      - AI_PROVIDER=${AI_PROVIDER:-auto}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_EMAIL=${SMTP_EMAIL:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - ALERT_EMAIL=${ALERT_EMAIL:-}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
+      - TWILIO_SMS_FROM=${TWILIO_SMS_FROM:-}
+      - TWILIO_SMS_TO=${TWILIO_SMS_TO:-}
+      - TWILIO_WHATSAPP_FROM=${TWILIO_WHATSAPP_FROM:-}
+      - TWILIO_WHATSAPP_TO=${TWILIO_WHATSAPP_TO:-}
+    volumes:
+      - backend-data:/app/backend
+    restart: unless-stopped
+
+  frontend:
+    image: node:20-alpine
+    container_name: ignite-shield-frontend
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend-data:

@@ -1,81 +1,144 @@
 from datetime import datetime, timezone
 import logging
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
 from schemas import (
     ReadingResponse, HistoricalReadingResponse,
-    ESP32SensorReading, ESP32SensorResponse, LatestSensorReadingResponse
+    ESP32SensorReading, ESP32SensorResponse, LatestSensorReadingResponse,
+    DeviceResponse
 )
 from database import get_db
-from models import SensorReading, SensorPrediction
+from models import SensorReading, SensorPrediction, Device
+from config import settings
 from services.sensor_store import set_latest_sensor_data, get_latest_sensor_data
 from services.prediction_service import predict_risk
 from services.weather_service import fetch_live_weather
-from services.email_service import process_risk_alert_state
+from services.notification_service import process_risk_alert_state
 
 logger = logging.getLogger("ignite_shield.readings")
 router = APIRouter()
 
 # ============================================================
-# ESP32 Sensor Ingestion Endpoints (Saves Directly to PostgreSQL)
+# ESP32 Sensor Ingestion Endpoints (Saves to Database & Tracks Device)
 # ============================================================
 
 @router.post("/readings/sensor", response_model=ESP32SensorResponse, status_code=status.HTTP_200_OK)
 @router.post("/sensor", response_model=ESP32SensorResponse, status_code=status.HTTP_200_OK)
-def ingest_esp32_sensor_data(data: ESP32SensorReading, db: Session = Depends(get_db)):
+@router.post("/sensor-readings", response_model=ESP32SensorResponse, status_code=status.HTTP_200_OK)
+def ingest_esp32_sensor_data(
+    data: ESP32SensorReading,
+    db: Session = Depends(get_db),
+    x_device_token: Optional[str] = Header(None, alias="X-Device-Token"),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
     """
-    Endpoint for ESP32 to send periodic sensor telemetry (e.g. every 15-30s):
-    1. Validates sensor data.
-    2. Saves reading directly to PostgreSQL sensor_readings table.
-    3. Caches reading in sensor_store.
-    4. Evaluates live Random Forest prediction.
-    5. Saves prediction in sensor_predictions table.
-    6. If prediction == HIGH and previous_risk != HIGH:
-       Sends emergency Email notification via Gmail SMTP and logs Alert.
-       (Continuous HIGH is deduplicated; LOW/MEDIUM does not send).
-    7. Returns successful HTTP 200 response with sensor data.
+    Endpoint for ESP32 to send periodic sensor telemetry:
+    1. Authenticates device if DEVICE_API_KEY is configured.
+    2. Validates physical sensor ranges (-20 to 100°C, 0-100% hum/soil).
+    3. Saves reading and updates Device health status and last-seen timestamp.
+    4. Caches reading in sensor_store.
+    5. Evaluates live Random Forest prediction with weather context.
+    6. Dispatches emergency alerts across Email, SMS, WhatsApp on transition to HIGH.
+    7. Returns HTTP 200 response with risk prediction.
     """
+    # 1. Device Authentication (if configured)
+    if settings.DEVICE_API_KEY:
+        token = x_device_token or x_api_key
+        if not token or token != settings.DEVICE_API_KEY:
+            logger.warning("[Ingest Auth] Rejected unauthenticated telemetry from device: %s", data.device_id)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or missing device authentication token. Provide X-Device-Token header."
+            )
 
-    logger.info("ESP32 sensor data received: temp=%.1f°C, hum=%.1f%%, soil=%.1f%%",
-                data.temperature, data.humidity, data.soil_moisture)
+    # 2. Strict Input Validation (Reject corrupt ADC / sensor readings)
+    if not (-20.0 <= data.temperature <= 100.0):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Temperature value {data.temperature}°C is outside valid physical range (-20°C to 100°C)."
+        )
+    if not (0.0 <= data.humidity <= 100.0):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Humidity value {data.humidity}% is outside valid physical range (0% to 100%)."
+        )
+    if not (0.0 <= data.soil_moisture <= 100.0):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Soil moisture value {data.soil_moisture}% is outside valid physical range (0% to 100%)."
+        )
 
-    # 1. Save directly to PostgreSQL sensor_readings table
+    device_id = data.device_id or "ESP32-NODE-01"
+    now_utc = datetime.now(timezone.utc)
+
+    logger.info("ESP32 [%s] telemetry received: temp=%.1f°C, hum=%.1f%%, soil=%.1f%%",
+                device_id, data.temperature, data.humidity, data.soil_moisture)
+
+    # 3. Determine location & fallback station coordinates
+    lat = data.latitude if data.latitude is not None else 12.2958
+    lon = data.longitude if data.longitude is not None else 76.6394
+    zone_name = f"Forest Sector Alpha ({device_id})"
+
+    # 4. Save reading to sensor_readings table
     record = SensorReading(
+        device_id=device_id,
         temperature=data.temperature,
         humidity=data.humidity,
-        soil_moisture=data.soil_moisture
+        soil_moisture=data.soil_moisture,
+        latitude=lat,
+        longitude=lon,
+        battery_level=data.battery_level,
+        created_at=data.timestamp or now_utc
     )
     db.add(record)
+
+    # 5. Update or register Device registry for health status
+    device = db.query(Device).filter(Device.device_id == device_id).first()
+    if not device:
+        device = Device(
+            device_id=device_id,
+            station_name=f"Monitoring Node {device_id}",
+            latitude=lat,
+            longitude=lon,
+            battery_level=data.battery_level if data.battery_level is not None else 100.0,
+            status="online",
+            last_seen=now_utc
+        )
+        db.add(device)
+    else:
+        device.last_seen = now_utc
+        device.status = "online"
+        if data.battery_level is not None:
+            device.battery_level = data.battery_level
+        if data.latitude is not None and data.longitude is not None:
+            device.latitude = data.latitude
+            device.longitude = data.longitude
+
     db.commit()
     db.refresh(record)
 
-    # 2. Cache latest reading in memory for rapid retrieval
+    # 6. Cache latest reading in memory for rapid retrieval
     set_latest_sensor_data(
         temperature=data.temperature,
         humidity=data.humidity,
         soil_moisture=data.soil_moisture
     )
 
-    # 3. Determine location & weather parameters (wind speed)
-    latest_pred = db.query(SensorPrediction).order_by(SensorPrediction.id.desc()).first()
-    lat = latest_pred.latitude if (latest_pred and latest_pred.latitude is not None) else 12.2958
-    lon = latest_pred.longitude if (latest_pred and latest_pred.longitude is not None) else 76.6394
-    zone_name = latest_pred.zone_name if (latest_pred and latest_pred.zone_name) else "Forest Sector Alpha"
-
-    wind_speed = latest_pred.wind_speed if (latest_pred and latest_pred.wind_speed is not None) else 0.8
-    wind_direction = latest_pred.wind_direction if latest_pred else 0.0
-    precipitation = latest_pred.precipitation if latest_pred else 0.0
+    # 7. Weather parameters
+    wind_speed = 0.8
+    wind_direction = 0.0
+    precipitation = 0.0
 
     try:
         weather = fetch_live_weather(lat, lon)
         wind_speed = weather["wind_speed"]
-        wind_direction = weather.get("wind_direction", wind_direction)
-        precipitation = weather.get("precipitation", precipitation)
+        wind_direction = weather.get("wind_direction", 0.0)
+        precipitation = weather.get("precipitation", 0.0)
     except Exception as w_err:
-        logger.warning("Could not fetch live weather for ESP32 prediction: %s. Using wind_speed=%.1f m/s", w_err, wind_speed)
+        logger.warning("Could not fetch live weather for ESP32 prediction: %s. Using default wind_speed=%.1f m/s", w_err, wind_speed)
 
-    # 4. Run Random Forest fire risk prediction
+    # 8. Run Random Forest fire risk prediction
     try:
         pred_res = predict_risk(
             temperature=data.temperature,
@@ -90,7 +153,7 @@ def ingest_esp32_sensor_data(data: ESP32SensorReading, db: Session = Depends(get
         current_risk = "LOW"
         confidence = 0.0
 
-    # 5. Persist prediction in sensor_predictions table
+    # 9. Persist prediction in sensor_predictions table
     pred_record = SensorPrediction(
         temperature=data.temperature,
         humidity=data.humidity,
@@ -108,7 +171,7 @@ def ingest_esp32_sensor_data(data: ESP32SensorReading, db: Session = Depends(get
     db.commit()
     db.refresh(pred_record)
 
-    # 6. Evaluate Email alert state (triggers ONLY if final prediction == HIGH and previous != HIGH)
+    # 10. Evaluate emergency alert state across all 3 channels
     try:
         process_risk_alert_state(
             db=db,
@@ -122,20 +185,57 @@ def ingest_esp32_sensor_data(data: ESP32SensorReading, db: Session = Depends(get
             longitude=lon,
             zone_name=zone_name,
             prediction_id=pred_record.id,
-            timestamp=record.created_at or datetime.now(timezone.utc),
+            timestamp=record.created_at or now_utc,
             async_dispatch=True
         )
     except Exception as alert_err:
-        logger.error("[Email] Error processing emergency alert dispatch: %s", alert_err)
-
+        logger.error("[Alert Dispatch] Error processing emergency alert: %s", alert_err)
 
     return ESP32SensorResponse(
         success=True,
         message="Sensor data received successfully",
         data=data,
         sensor_data=data,
+        device_id=device_id,
+        fire_risk=current_risk,
+        confidence=confidence,
         timestamp=record.created_at
     )
+
+# ============================================================
+# Device Registry & Health Endpoints
+# ============================================================
+
+@router.get("/devices", response_model=List[DeviceResponse])
+def get_devices(db: Session = Depends(get_db)):
+    """Retrieve list of registered IoT monitoring devices with connectivity and battery health."""
+    devices = db.query(Device).order_by(Device.last_seen.desc()).all()
+    now_utc = datetime.now(timezone.utc)
+    for d in devices:
+        if d.last_seen:
+            ls = d.last_seen.replace(tzinfo=timezone.utc) if d.last_seen.tzinfo is None else d.last_seen
+            # If not heard from within 60 seconds, mark as offline
+            if (now_utc - ls).total_seconds() > 60:
+                d.status = "offline"
+            else:
+                d.status = "online"
+    db.commit()
+    return devices
+
+
+@router.get("/devices/{device_id}", response_model=DeviceResponse)
+def get_device_by_id(device_id: str, db: Session = Depends(get_db)):
+    """Retrieve health and telemetry status for a specific device."""
+    device = db.query(Device).filter(Device.device_id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail=f"Device '{device_id}' not found.")
+    now_utc = datetime.now(timezone.utc)
+    if device.last_seen:
+        ls = device.last_seen.replace(tzinfo=timezone.utc) if device.last_seen.tzinfo is None else device.last_seen
+        device.status = "offline" if (now_utc - ls).total_seconds() > 60 else "online"
+        db.commit()
+    return device
+
 
 # ============================================================
 # Latest ESP32 Reading Endpoint (PostgreSQL is Single Source of Truth)

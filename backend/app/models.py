@@ -1,3 +1,4 @@
-from models import SensorReading, SensorPrediction, User, Alert, Base
+from models import SensorReading, SensorPrediction, User, Alert, Device, Base
 
-__all__ = ["SensorReading", "SensorPrediction", "User", "Alert", "Base"]
+__all__ = ["SensorReading", "SensorPrediction", "User", "Alert", "Device", "Base"]
+

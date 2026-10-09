@@ -1,11 +1,11 @@
 import React, { useCallback } from 'react';
-import { Activity, Thermometer, Droplets, Wind, CloudRain, Compass, RefreshCw } from 'lucide-react';
+import { Activity, Thermometer, Droplets, Wind, CloudRain, Compass, RefreshCw, Wifi, WifiOff, Battery, Cpu } from 'lucide-react';
 import { usePolling } from '../hooks/usePolling';
-import { sensorApi } from '../services/api';
+import { sensorApi, devicesApi } from '../services/api';
 import { LoadingState, ErrorState } from '../components/common/States';
 import { formatDateTime, formatRelativeTime, getRiskColor, formatConfidence } from '../utils/formatters';
 import { getWindDirectionLabel } from '../utils/fireSpreadEngine';
-import type { ReadingResponse } from '../types';
+import type { ReadingResponse, DeviceResponse } from '../types';
 import LiveDateTimeBadge from '../components/common/LiveDateTimeBadge';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -14,9 +14,11 @@ import {
 export default function LiveMonitoringPage() {
   const fetchLatest = useCallback(() => sensorApi.getLatest(), []);
   const fetchHistory = useCallback(() => sensorApi.getAll(20), []);
+  const fetchDevices = useCallback(() => devicesApi.getAll(), []);
 
   const { data: latest, loading, error, refresh } = usePolling<ReadingResponse>(fetchLatest, 5000);
   const { data: history } = usePolling<ReadingResponse[]>(fetchHistory, 10000);
+  const { data: devices } = usePolling<DeviceResponse[]>(fetchDevices, 10000);
 
   if (loading) return <LoadingState message="Connecting to sensors..." />;
   if (error) return <ErrorState message={error} onRetry={refresh} />;
@@ -44,6 +46,70 @@ export default function LiveMonitoringPage() {
           </button>
         </div>
       </div>
+
+      {/* IoT Station Fleet Health */}
+      {devices && devices.length > 0 && (
+        <div
+          className="glass-card"
+          style={{
+            padding: '12px 16px',
+            marginBottom: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '12px',
+            border: '1px solid rgba(255,255,255,0.08)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600 }}>
+            <Cpu size={16} style={{ color: '#38bdf8' }} />
+            <span>Active IoT Telemetry Fleet:</span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            {devices.map((d) => {
+              const isOnline = d.status === 'online';
+              return (
+                <div
+                  key={d.device_id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '6px 12px',
+                    borderRadius: '8px',
+                    background: isOnline ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                    border: `1px solid ${isOnline ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                    fontSize: '12px',
+                  }}
+                >
+                  {isOnline ? (
+                    <Wifi size={14} style={{ color: '#22c55e' }} />
+                  ) : (
+                    <WifiOff size={14} style={{ color: '#ef4444' }} />
+                  )}
+                  <span style={{ fontWeight: 600, color: '#f8fafc' }}>{d.device_id}</span>
+                  <span style={{ color: isOnline ? '#4ade80' : '#f87171', fontSize: '11px', textTransform: 'uppercase' }}>
+                    {d.status}
+                  </span>
+                  {d.battery_level != null && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', color: '#94a3b8', fontSize: '11px' }}>
+                      <Battery size={13} style={{ color: d.battery_level < 20 ? '#ef4444' : '#22c55e' }} />
+                      {d.battery_level}%
+                    </span>
+                  )}
+                  {d.last_seen && (
+                    <span style={{ color: '#64748b', fontSize: '11px' }}>
+                      • {formatRelativeTime(d.last_seen)}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {latest && (
         <>

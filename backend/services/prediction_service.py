@@ -5,10 +5,19 @@ from pathlib import Path
 
 logger = logging.getLogger("ignite_shield.prediction")
 
-# Construct paths relative to the project root
+# Construct paths relative to the project root with container fallbacks
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 MODEL_PATH = BASE_DIR / "ml" / "models" / "fire_risk_model.pkl"
 LABEL_ENCODER_PATH = BASE_DIR / "ml" / "models" / "label_encoder.pkl"
+
+if not MODEL_PATH.exists():
+    alt_base = Path(__file__).resolve().parent.parent
+    if (alt_base / "ml" / "models" / "fire_risk_model.pkl").exists():
+        MODEL_PATH = alt_base / "ml" / "models" / "fire_risk_model.pkl"
+        LABEL_ENCODER_PATH = alt_base / "ml" / "models" / "label_encoder.pkl"
+    elif Path("/app/ml/models/fire_risk_model.pkl").exists():
+        MODEL_PATH = Path("/app/ml/models/fire_risk_model.pkl")
+        LABEL_ENCODER_PATH = Path("/app/ml/models/label_encoder.pkl")
 
 # Initialize variables
 model = None

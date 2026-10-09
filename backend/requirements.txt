@@ -6,9 +6,11 @@ python-dotenv
 sqlalchemy
 psycopg2-binary
 scikit-learn
+pandas
 joblib
 python-jose[cryptography]
 bcrypt
 httpx
 alembic
 twilio
+pytest

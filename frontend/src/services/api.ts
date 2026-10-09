@@ -22,6 +22,9 @@ import type {
   SMSTestResponse,
   WhatsAppTestResponse,
   MultiChannelTestResponse,
+  DeviceResponse,
+  AIChatRequest,
+  AIChatResponse,
 } from '../types';
 
 
@@ -37,11 +40,15 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Attach token to requests
+// Attach token and admin key to requests
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('ignite_shield_token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  }
+  const adminKey = localStorage.getItem('ignite_shield_admin_key') || (import.meta.env.VITE_ADMIN_API_KEY as string);
+  if (adminKey) {
+    config.headers['X-Admin-Key'] = adminKey;
   }
   return config;
 });
@@ -240,6 +247,36 @@ export const exportApi = {
     const res = await api.get(`/export/csv?data_type=${dataType}&limit=${limit}`, {
       responseType: 'blob',
     });
+    return res.data;
+  },
+};
+
+// ============================================================
+// IoT Devices API
+// ============================================================
+
+export const devicesApi = {
+  getAll: async (): Promise<DeviceResponse[]> => {
+    const res = await api.get('/devices');
+    return res.data;
+  },
+  getOne: async (deviceId: string): Promise<DeviceResponse> => {
+    const res = await api.get(`/devices/${deviceId}`);
+    return res.data;
+  },
+};
+
+// ============================================================
+// AI Assistant API
+// ============================================================
+
+export const aiApi = {
+  chat: async (req: AIChatRequest): Promise<AIChatResponse> => {
+    const res = await api.post('/ai/chat', req);
+    return res.data;
+  },
+  getContext: async (stationId?: string): Promise<any> => {
+    const res = await api.get(`/ai/context${stationId ? `?station_id=${stationId}` : ''}`);
     return res.data;
   },
 };

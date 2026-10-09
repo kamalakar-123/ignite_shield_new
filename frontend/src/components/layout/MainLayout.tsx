@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
+import AIAssistantDrawer from '../ai/AIAssistantDrawer';
 import { healthApi } from '../../services/api';
 
 export default function MainLayout() {
@@ -32,6 +33,7 @@ export default function MainLayout() {
       <main className="main-content">
         <Outlet />
       </main>
+      <AIAssistantDrawer />
     </div>
   );
 }

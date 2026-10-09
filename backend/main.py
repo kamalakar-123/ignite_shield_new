@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy import text
 
 from database import engine, Base
-from api import routes_prediction, routes_readings, routes_dashboard, routes_auth
+from api import routes_prediction, routes_readings, routes_dashboard, routes_auth, routes_ai
 from services.prediction_service import load_models
 
 
@@ -31,41 +31,43 @@ async def lifespan(app: FastAPI):
     # Create DB tables
     Base.metadata.create_all(bind=engine)
 
-    # Ensure optional columns exist if migrating existing DB
-    try:
-        with engine.connect() as conn:
-            for col_name, col_type in [
-                ("wind_direction", "DOUBLE PRECISION"),
-                ("precipitation", "DOUBLE PRECISION"),
-                ("latitude", "DOUBLE PRECISION"),
-                ("longitude", "DOUBLE PRECISION"),
-                ("zone_name", "VARCHAR(255)"),
-            ]:
-                conn.execute(text(f"ALTER TABLE sensor_predictions ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+    # Ensure optional columns exist if migrating existing PostgreSQL DB
+    if engine.dialect.name == "postgresql":
+        try:
+            with engine.connect() as conn:
+                for col_name, col_type in [
+                    ("wind_direction", "DOUBLE PRECISION"),
+                    ("precipitation", "DOUBLE PRECISION"),
+                    ("latitude", "DOUBLE PRECISION"),
+                    ("longitude", "DOUBLE PRECISION"),
+                    ("zone_name", "VARCHAR(255)"),
+                ]:
+                    conn.execute(text(f"ALTER TABLE sensor_predictions ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
 
-            for col_name, col_type in [
-                ("temperature", "DOUBLE PRECISION"),
-                ("humidity", "DOUBLE PRECISION"),
-                ("soil_moisture", "DOUBLE PRECISION"),
-                ("wind_speed", "DOUBLE PRECISION"),
-                ("location", "VARCHAR(255)"),
-                ("email_status", "VARCHAR(50)"),
-                ("email_recipient", "VARCHAR(255)"),
-                ("email_error", "TEXT"),
-                ("sms_status", "VARCHAR(50)"),
-                ("sms_recipient", "VARCHAR(255)"),
-                ("sms_message_sid", "VARCHAR(255)"),
-                ("sms_error", "TEXT"),
-                ("whatsapp_status", "VARCHAR(50)"),
-                ("whatsapp_recipient", "VARCHAR(255)"),
-                ("whatsapp_message_sid", "VARCHAR(255)"),
-                ("whatsapp_error", "TEXT"),
-            ]:
-                conn.execute(text(f"ALTER TABLE alerts ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
-            conn.commit()
+                for col_name, col_type in [
+                    ("temperature", "DOUBLE PRECISION"),
+                    ("humidity", "DOUBLE PRECISION"),
+                    ("soil_moisture", "DOUBLE PRECISION"),
+                    ("wind_speed", "DOUBLE PRECISION"),
+                    ("location", "VARCHAR(255)"),
+                    ("email_status", "VARCHAR(50)"),
+                    ("email_recipient", "VARCHAR(255)"),
+                    ("email_error", "TEXT"),
+                    ("sms_status", "VARCHAR(50)"),
+                    ("sms_recipient", "VARCHAR(255)"),
+                    ("sms_message_sid", "VARCHAR(255)"),
+                    ("sms_error", "TEXT"),
+                    ("whatsapp_status", "VARCHAR(50)"),
+                    ("whatsapp_recipient", "VARCHAR(255)"),
+                    ("whatsapp_message_sid", "VARCHAR(255)"),
+                    ("whatsapp_error", "TEXT"),
+                    ("device_id", "VARCHAR(100)"),
+                ]:
+                    conn.execute(text(f"ALTER TABLE alerts ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+                conn.commit()
 
-    except Exception as e:
-        print(f"Schema migration note: {e}")
+        except Exception as e:
+            logger.info("PostgreSQL schema migration note: %s", e)
     
     # Load ML models on startup
     load_models()
@@ -109,6 +111,7 @@ app.include_router(routes_prediction.router, prefix="/api", tags=["prediction"])
 app.include_router(routes_readings.router, prefix="/api", tags=["readings"])
 app.include_router(routes_dashboard.router, prefix="/api", tags=["dashboard"])
 app.include_router(routes_auth.router, prefix="/api", tags=["auth"])
+app.include_router(routes_ai.router, prefix="/api/ai", tags=["ai"])
 
 if __name__ == "__main__":
     import uvicorn
