@@ -9,9 +9,14 @@ import io
 from database import get_db
 from models import SensorPrediction, Alert
 from schemas import (
-    DashboardStats, AlertResponse, AlertAcknowledge,
+    DashboardStats, AlertResponse, AlertAcknowledge, EmailTestResponse,
+    SMSTestResponse, WhatsAppTestResponse, MultiChannelTestResponse, ChannelTestResult,
     AnalyticsResponse, AnalyticsDataPoint, RiskDistribution
 )
+from services.email_service import send_email_test_alert
+from services.twilio_service import send_sms_test_alert, send_whatsapp_test_alert
+from services.notification_service import dispatch_all_notifications
+
 
 router = APIRouter()
 
@@ -25,19 +30,19 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     """Get real dashboard statistics from the database."""
     total = db.query(sql_func.count(SensorPrediction.id)).scalar() or 0
     high = db.query(sql_func.count(SensorPrediction.id)).filter(
-        SensorPrediction.fire_risk == "High"
+        sql_func.upper(SensorPrediction.fire_risk) == "HIGH"
     ).scalar() or 0
     medium = db.query(sql_func.count(SensorPrediction.id)).filter(
-        SensorPrediction.fire_risk == "Medium"
+        sql_func.upper(SensorPrediction.fire_risk) == "MEDIUM"
     ).scalar() or 0
     low = db.query(sql_func.count(SensorPrediction.id)).filter(
-        SensorPrediction.fire_risk == "Low"
+        sql_func.upper(SensorPrediction.fire_risk) == "LOW"
     ).scalar() or 0
 
     # Active fires = High risk readings in last 1 hour
     one_hour_ago = datetime.utcnow() - timedelta(hours=1)
     active_fires = db.query(sql_func.count(SensorPrediction.id)).filter(
-        SensorPrediction.fire_risk == "High",
+        sql_func.upper(SensorPrediction.fire_risk) == "HIGH",
         SensorPrediction.created_at >= one_hour_ago
     ).scalar() or 0
 
@@ -89,6 +94,242 @@ def get_alerts(
     return alerts
 
 
+@router.get("/alerts/latest", response_model=Optional[AlertResponse])
+def get_latest_alert(db: Session = Depends(get_db)):
+    """
+    Return the most recent HIGH-risk emergency alert (or latest alert recorded).
+    """
+    # Prefer latest HIGH-risk alert
+    alert = db.query(Alert).filter(
+        sql_func.upper(Alert.risk_level) == "HIGH"
+    ).order_by(desc(Alert.created_at)).first()
+
+    if not alert:
+        # Fallback to the latest alert of any severity
+        alert = db.query(Alert).order_by(desc(Alert.created_at)).first()
+
+    return alert
+
+
+@router.post("/alerts/test", response_model=EmailTestResponse, status_code=status.HTTP_200_OK)
+@router.post("/alerts/test-email", response_model=EmailTestResponse, status_code=status.HTTP_200_OK)
+def trigger_test_email_alert(db: Session = Depends(get_db)):
+    """
+    Manual testing endpoint:
+    Sends a test Email alert via Gmail SMTP to verify configuration
+    and delivery to the forest officer without waiting for a real HIGH prediction.
+    """
+    res = send_email_test_alert(
+        temperature=30.0,
+        humidity=70.0,
+        soil_moisture=20.0,
+        wind_speed=1.5,
+        location="Forest Sector Alpha (12.2958° N, 76.6394° E)"
+    )
+
+    alert_status = "SENT" if res.get("success") else "FAILED"
+
+    # Record test in alerts history for audit
+    alert_record = Alert(
+        alert_type="TEST_ALERT",
+        risk_level="High",
+        message="🔥 IGNITE SHIELD TEST ALERT: Gmail SMTP notification system test verified.",
+        temperature=30.0,
+        humidity=70.0,
+        soil_moisture=20.0,
+        wind_speed=1.5,
+        location="Forest Sector Alpha (12.2958° N, 76.6394° E)",
+        email_status=alert_status,
+        email_recipient=res.get("recipient"),
+        email_error=res.get("error"),
+        sms_status="SKIPPED",
+        whatsapp_status="SKIPPED",
+        is_acknowledged=True
+    )
+    db.add(alert_record)
+    db.commit()
+
+    return EmailTestResponse(
+        success=res.get("success", False),
+        status=alert_status,
+        message="Test email alert sent successfully" if res.get("success") else f"Failed to send test email: {res.get('error') or 'Delivery error'}",
+        recipient=res.get("recipient"),
+        error=res.get("error")
+    )
+
+
+@router.post("/alerts/test-sms", response_model=SMSTestResponse, status_code=status.HTTP_200_OK)
+def trigger_test_sms_alert(db: Session = Depends(get_db)):
+    """
+    Manual testing endpoint:
+    Sends a test SMS alert via Twilio to verify SMS configuration and delivery.
+    """
+    res = send_sms_test_alert(
+        temperature=30.0,
+        humidity=70.0,
+        soil_moisture=20.0,
+        wind_speed=1.5,
+        location="Forest Sector Alpha (12.2958° N, 76.6394° E)"
+    )
+
+    alert_status = "SENT" if res.get("success") else "FAILED"
+
+    # Record test in alerts history for audit
+    alert_record = Alert(
+        alert_type="TEST_ALERT",
+        risk_level="High",
+        message="📱 IGNITE SHIELD TEST ALERT: Twilio SMS notification system test.",
+        temperature=30.0,
+        humidity=70.0,
+        soil_moisture=20.0,
+        wind_speed=1.5,
+        location="Forest Sector Alpha (12.2958° N, 76.6394° E)",
+        email_status="SKIPPED",
+        sms_status=alert_status,
+        sms_recipient=res.get("recipient"),
+        sms_message_sid=res.get("message_sid"),
+        sms_error=res.get("error"),
+        whatsapp_status="SKIPPED",
+        is_acknowledged=True
+    )
+    db.add(alert_record)
+    db.commit()
+
+    return SMSTestResponse(
+        success=res.get("success", False),
+        status=alert_status,
+        message="Test SMS alert sent successfully" if res.get("success") else f"Failed to send test SMS: {res.get('error') or 'Delivery error'}",
+        recipient=res.get("recipient"),
+        message_sid=res.get("message_sid"),
+        error=res.get("error")
+    )
+
+
+@router.post("/alerts/test-whatsapp", response_model=WhatsAppTestResponse, status_code=status.HTTP_200_OK)
+def trigger_test_whatsapp_alert(db: Session = Depends(get_db)):
+    """
+    Manual testing endpoint:
+    Sends a test WhatsApp alert via Twilio to verify WhatsApp configuration and sandbox status.
+    """
+    res = send_whatsapp_test_alert(
+        temperature=30.0,
+        humidity=70.0,
+        soil_moisture=20.0,
+        wind_speed=1.5,
+        location="Forest Sector Alpha (12.2958° N, 76.6394° E)"
+    )
+
+    alert_status = "SENT" if res.get("success") else "FAILED"
+
+    # Record test in alerts history for audit
+    alert_record = Alert(
+        alert_type="TEST_ALERT",
+        risk_level="High",
+        message="💬 IGNITE SHIELD TEST ALERT: Twilio WhatsApp notification system test.",
+        temperature=30.0,
+        humidity=70.0,
+        soil_moisture=20.0,
+        wind_speed=1.5,
+        location="Forest Sector Alpha (12.2958° N, 76.6394° E)",
+        email_status="SKIPPED",
+        sms_status="SKIPPED",
+        whatsapp_status=alert_status,
+        whatsapp_recipient=res.get("recipient"),
+        whatsapp_message_sid=res.get("message_sid"),
+        whatsapp_error=res.get("error"),
+        is_acknowledged=True
+    )
+    db.add(alert_record)
+    db.commit()
+
+    return WhatsAppTestResponse(
+        success=res.get("success", False),
+        status=alert_status,
+        message="Test WhatsApp alert sent successfully" if res.get("success") else f"Failed to send test WhatsApp: {res.get('error') or 'Delivery error'}",
+        recipient=res.get("recipient"),
+        message_sid=res.get("message_sid"),
+        error=res.get("error")
+    )
+
+
+@router.post("/alerts/test-all", response_model=MultiChannelTestResponse, status_code=status.HTTP_200_OK)
+@router.post("/alerts/test-channels", response_model=MultiChannelTestResponse, status_code=status.HTTP_200_OK)
+def trigger_test_all_channels(db: Session = Depends(get_db)):
+    """
+    Manual testing endpoint:
+    Dispatches test alerts across ALL THREE channels simultaneously:
+    1. SMTP Email
+    2. Twilio SMS
+    3. Twilio WhatsApp
+    Each channel executes independently without blocking the others.
+    """
+    results = dispatch_all_notifications(
+        temperature=30.0,
+        humidity=70.0,
+        soil_moisture=20.0,
+        wind_speed=1.5,
+        risk_level="HIGH",
+        confidence=98.5,
+        location="Forest Sector Alpha (12.2958° N, 76.6394° E)",
+    )
+
+    em = results["email"]
+    sm = results["sms"]
+    wa = results["whatsapp"]
+
+    alert_record = Alert(
+        alert_type="TEST_ALERT",
+        risk_level="High",
+        message="🔔 IGNITE SHIELD TEST ALERT: Multi-Channel (Email + SMS + WhatsApp) dispatch test.",
+        temperature=30.0,
+        humidity=70.0,
+        soil_moisture=20.0,
+        wind_speed=1.5,
+        location="Forest Sector Alpha (12.2958° N, 76.6394° E)",
+        email_status=em.get("status", "FAILED"),
+        email_recipient=em.get("recipient"),
+        email_error=em.get("error"),
+        sms_status=sm.get("status", "FAILED"),
+        sms_recipient=sm.get("recipient"),
+        sms_message_sid=sm.get("message_sid"),
+        sms_error=sm.get("error"),
+        whatsapp_status=wa.get("status", "FAILED"),
+        whatsapp_recipient=wa.get("recipient"),
+        whatsapp_message_sid=wa.get("message_sid"),
+        whatsapp_error=wa.get("error"),
+        is_acknowledged=True
+    )
+    db.add(alert_record)
+    db.commit()
+
+    return MultiChannelTestResponse(
+        success=results["any_success"],
+        message="Multi-channel test executed. Inspect individual channel results for details.",
+        email=ChannelTestResult(
+            success=em.get("success", False),
+            status=em.get("status", "FAILED"),
+            recipient=em.get("recipient"),
+            error=em.get("error"),
+        ),
+        sms=ChannelTestResult(
+            success=sm.get("success", False),
+            status=sm.get("status", "FAILED"),
+            recipient=sm.get("recipient"),
+            message_sid=sm.get("message_sid"),
+            error=sm.get("error"),
+        ),
+        whatsapp=ChannelTestResult(
+            success=wa.get("success", False),
+            status=wa.get("status", "FAILED"),
+            recipient=wa.get("recipient"),
+            message_sid=wa.get("message_sid"),
+            error=wa.get("error"),
+        ),
+    )
+
+
+
+
 @router.put("/alerts/{alert_id}/acknowledge")
 def acknowledge_alert(alert_id: int, db: Session = Depends(get_db)):
     """Acknowledge an alert."""
@@ -108,7 +349,7 @@ def _auto_generate_alerts(db: Session):
     ]
     
     query = db.query(SensorPrediction).filter(
-        SensorPrediction.fire_risk.in_(["High", "Medium"])
+        sql_func.upper(SensorPrediction.fire_risk).in_(["HIGH", "MEDIUM"])
     )
     if existing_pred_ids:
         query = query.filter(~SensorPrediction.id.in_(existing_pred_ids))
@@ -116,14 +357,16 @@ def _auto_generate_alerts(db: Session):
     new_high_risk = query.order_by(desc(SensorPrediction.created_at)).limit(50).all()
     
     for pred in new_high_risk:
-        if pred.fire_risk == "High":
+        risk_str = (pred.fire_risk or "").upper()
+        conf_pct = pred.confidence * 100 if pred.confidence <= 1.0 else pred.confidence
+        if risk_str == "HIGH":
             alert_type = "HIGH_RISK"
             risk_level = "High"
-            message = f"🔥 HIGH fire risk detected! Temperature: {pred.temperature}°C, Wind: {pred.wind_speed} m/s. Confidence: {pred.confidence:.1%}"
+            message = f"🔥 HIGH fire risk detected! Temperature: {pred.temperature}°C, Wind: {pred.wind_speed} m/s. Confidence: {conf_pct:.1f}%"
         else:
             alert_type = "MEDIUM_RISK"
             risk_level = "Medium"
-            message = f"⚠️ MEDIUM fire risk detected. Temperature: {pred.temperature}°C, Humidity: {pred.humidity}%. Confidence: {pred.confidence:.1%}"
+            message = f"⚠️ MEDIUM fire risk detected. Temperature: {pred.temperature}°C, Humidity: {pred.humidity}%. Confidence: {conf_pct:.1f}%"
         
         alert = Alert(
             prediction_id=pred.id,
@@ -133,8 +376,17 @@ def _auto_generate_alerts(db: Session):
             message=message,
             latitude=pred.latitude,
             longitude=pred.longitude,
+            temperature=pred.temperature,
+            humidity=pred.humidity,
+            soil_moisture=pred.soil_moisture,
+            wind_speed=pred.wind_speed,
+            location=pred.zone_name or (f"Lat: {pred.latitude:.4f}, Lon: {pred.longitude:.4f}" if pred.latitude and pred.longitude else "Forest Sector Alpha"),
+            email_status="SKIPPED",
+            sms_status="SKIPPED",
+            whatsapp_status="SKIPPED"
         )
         db.add(alert)
+
     
     if new_high_risk:
         db.commit()
@@ -180,7 +432,7 @@ def get_analytics(
     risk_dist = []
     for level in ["Low", "Medium", "High"]:
         count = db.query(sql_func.count(SensorPrediction.id)).filter(
-            SensorPrediction.fire_risk == level
+            sql_func.upper(SensorPrediction.fire_risk) == level.upper()
         ).scalar() or 0
         risk_dist.append(RiskDistribution(
             risk_level=level,

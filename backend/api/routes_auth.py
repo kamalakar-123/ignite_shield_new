@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from database import get_db
 from models import User
 from schemas import UserRegister, UserLogin, TokenResponse, UserResponse
+from config import settings
 
 import bcrypt
 from jose import JWTError, jwt
@@ -15,7 +16,7 @@ router = APIRouter()
 # Password / JWT Config
 # ============================================================
 
-SECRET_KEY = "ignite-shield-secret-key-change-in-production"
+SECRET_KEY = settings.JWT_SECRET_KEY
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
 

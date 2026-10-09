@@ -3,6 +3,73 @@
 // ============================================================
 
 // Sensor & Prediction
+export interface ESP32SensorReading {
+  temperature: number;
+  humidity: number;
+  soil_moisture: number;
+}
+
+export interface ESP32SensorResponse {
+  success: boolean;
+  message: string;
+  sensor_data: ESP32SensorReading;
+  timestamp: string;
+}
+
+export interface LatestSensorReading {
+  temperature: number;
+  humidity: number;
+  soil_moisture: number;
+  timestamp?: string;
+}
+
+export interface PredictionFlowRequest {
+  temperature?: number;
+  humidity?: number;
+  soil_moisture?: number;
+  latitude: number;
+  longitude: number;
+  is_simulation?: boolean;
+}
+
+export interface PredictionFlowResponse {
+  success: boolean;
+  location: {
+    latitude: number;
+    longitude: number;
+  };
+  sensor_data: {
+    temperature: number;
+    humidity: number;
+    soil_moisture: number;
+  };
+  weather_data: {
+    wind_speed: number;
+    wind_direction: number;
+    precipitation: number;
+  };
+  prediction: {
+    fire_risk: string;
+    confidence: number;
+  };
+  timestamp: string;
+}
+
+export interface HistoricalReading {
+  id?: number;
+  timestamp: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  temperature: number;
+  humidity: number;
+  soil_moisture: number;
+  wind_speed: number;
+  wind_direction?: number | null;
+  precipitation?: number | null;
+  fire_risk: string;
+  confidence: number;
+}
+
 export interface SensorData {
   temperature: number;
   humidity: number;
@@ -69,9 +136,68 @@ export interface AlertResponse {
   message: string;
   latitude: number | null;
   longitude: number | null;
+  temperature?: number | null;
+  humidity?: number | null;
+  soil_moisture?: number | null;
+  wind_speed?: number | null;
+  location?: string | null;
+  email_status?: string | null;
+  email_recipient?: string | null;
+  email_error?: string | null;
+  sms_status?: string | null;
+  sms_recipient?: string | null;
+  sms_message_sid?: string | null;
+  sms_error?: string | null;
+  whatsapp_status?: string | null;
+  whatsapp_recipient?: string | null;
+  whatsapp_message_sid?: string | null;
+  whatsapp_error?: string | null;
   is_acknowledged: boolean;
   created_at: string;
 }
+
+export interface ChannelTestResult {
+  success: boolean;
+  status: string;
+  recipient?: string | null;
+  message_sid?: string | null;
+  error?: string | null;
+}
+
+export interface EmailTestResponse {
+  success: boolean;
+  status: string;
+  message: string;
+  recipient?: string | null;
+  error?: string | null;
+}
+
+export interface SMSTestResponse {
+  success: boolean;
+  status: string;
+  message: string;
+  recipient?: string | null;
+  message_sid?: string | null;
+  error?: string | null;
+}
+
+export interface WhatsAppTestResponse {
+  success: boolean;
+  status: string;
+  message: string;
+  recipient?: string | null;
+  message_sid?: string | null;
+  error?: string | null;
+}
+
+export interface MultiChannelTestResponse {
+  success: boolean;
+  message: string;
+  email: ChannelTestResult;
+  sms: ChannelTestResult;
+  whatsapp: ChannelTestResult;
+}
+
 
 // Analytics
 export interface AnalyticsDataPoint {

@@ -53,10 +53,11 @@ export function formatValue(value: number | null | undefined, unit: string, deci
  * Get risk level color.
  */
 export function getRiskColor(risk: string): string {
-  switch (risk) {
-    case 'High': return '#ef4444';
-    case 'Medium': return '#eab308';
-    case 'Low': return '#22c55e';
+  const r = (risk || '').toUpperCase();
+  switch (r) {
+    case 'HIGH': return '#ef4444';
+    case 'MEDIUM': return '#eab308';
+    case 'LOW': return '#22c55e';
     default: return '#6b7280';
   }
 }
@@ -65,10 +66,11 @@ export function getRiskColor(risk: string): string {
  * Get risk level background color.
  */
 export function getRiskBgColor(risk: string): string {
-  switch (risk) {
-    case 'High': return 'rgba(239, 68, 68, 0.15)';
-    case 'Medium': return 'rgba(234, 179, 8, 0.15)';
-    case 'Low': return 'rgba(34, 197, 94, 0.15)';
+  const r = (risk || '').toUpperCase();
+  switch (r) {
+    case 'HIGH': return 'rgba(239, 68, 68, 0.15)';
+    case 'MEDIUM': return 'rgba(234, 179, 8, 0.15)';
+    case 'LOW': return 'rgba(34, 197, 94, 0.15)';
     default: return 'rgba(107, 114, 128, 0.15)';
   }
 }
@@ -92,5 +94,6 @@ export function downloadBlob(blob: Blob, filename: string): void {
  */
 export function formatConfidence(confidence: number | null | undefined): string {
   if (confidence === null || confidence === undefined) return 'N/A';
-  return `${(confidence * 100).toFixed(1)}%`;
+  const val = confidence <= 1.0 ? confidence * 100 : confidence;
+  return `${val.toFixed(1)}%`;
 }

@@ -1,9 +1,11 @@
 import joblib
+import logging
 import pandas as pd
 from pathlib import Path
 
+logger = logging.getLogger("ignite_shield.prediction")
+
 # Construct paths relative to the project root
-# Using pathlib to build the path safely
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 MODEL_PATH = BASE_DIR / "ml" / "models" / "fire_risk_model.pkl"
 LABEL_ENCODER_PATH = BASE_DIR / "ml" / "models" / "label_encoder.pkl"
@@ -19,9 +21,9 @@ def load_models():
         try:
             model = joblib.load(MODEL_PATH)
             label_encoder = joblib.load(LABEL_ENCODER_PATH)
-            print("Successfully loaded ML models.")
+            logger.info("Successfully loaded ML models.")
         except Exception as e:
-            print(f"Failed to load ML models: {e}")
+            logger.error(f"Failed to load ML models: {e}")
             raise RuntimeError(f"Model loading failed: {e}")
 
 def predict_risk(temperature: float, humidity: float, soil_moisture: float, wind_speed: float):
@@ -32,6 +34,8 @@ def predict_risk(temperature: float, humidity: float, soil_moisture: float, wind
     if model is None or label_encoder is None:
         load_models()
         
+    logger.info("Running fire risk prediction...")
+
     # The feature order MUST remain exactly:
     # "Temperature (C)", "Relative Humidity (%)", "Soil Moisture (%)", "Wind Speed (m/s)"
     input_data = pd.DataFrame([{
@@ -48,12 +52,13 @@ def predict_risk(temperature: float, humidity: float, soil_moisture: float, wind
     class_indices = model.classes_
     class_names = label_encoder.inverse_transform(class_indices)
     
-    # Map class names to their probabilities with both Title and UPPERCASE keys
+    # Map class names to their probabilities (percentages and decimals)
     probabilities = {}
     for name, prob in zip(class_names, probabilities_raw):
         val = round(float(prob), 4)
-        probabilities[name] = val
-        probabilities[name.upper()] = val
+        pct = round(float(prob) * 100, 2)
+        probabilities[str(name)] = val
+        probabilities[str(name).upper()] = pct
 
     # Predict the actual class (encoded)
     prediction_encoded = model.predict(input_data)[0]
@@ -62,14 +67,21 @@ def predict_risk(temperature: float, humidity: float, soil_moisture: float, wind
     prediction_label = str(label_encoder.inverse_transform([prediction_encoded])[0])
     pred_upper = prediction_label.upper()
 
-    # Probability of the predicted class
-    pred_prob = probabilities.get(pred_upper, probabilities.get(prediction_label, float(probabilities_raw[0])))
+    # Raw probability of predicted class
+    pred_idx = list(class_indices).index(prediction_encoded) if prediction_encoded in class_indices else 0
+    raw_class_prob = float(probabilities_raw[pred_idx])
+    
+    # Actual confidence percentage (e.g. 91.25)
+    confidence_pct = round(raw_class_prob * 100, 2)
+
+    logger.info(f"Prediction: {pred_upper} (Confidence: {confidence_pct}%)")
 
     return {
         "prediction": pred_upper,
-        "fire_risk": prediction_label,
-        "probability": pred_prob,
-        "confidence": pred_prob,
+        "fire_risk": pred_upper,
+        "confidence": confidence_pct,
+        "probability": confidence_pct,
+        "raw_confidence": raw_class_prob,
         "probabilities": probabilities
     }
 

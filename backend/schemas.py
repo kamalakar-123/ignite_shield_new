@@ -6,6 +6,53 @@ from datetime import datetime
 # Sensor / Prediction Schemas
 # ============================================================
 
+class ESP32SensorReading(BaseModel):
+    temperature: float
+    humidity: float
+    soil_moisture: float
+
+class ESP32SensorResponse(BaseModel):
+    success: bool = True
+    message: str = "Sensor data received successfully"
+    data: Optional[ESP32SensorReading] = None
+    sensor_data: Optional[ESP32SensorReading] = None
+    timestamp: Optional[datetime] = None
+
+class LatestSensorReadingResponse(BaseModel):
+    temperature: float
+    humidity: float
+    soil_moisture: float
+    timestamp: Optional[str] = None
+
+class PredictionRequest(BaseModel):
+    temperature: Optional[float] = None
+    humidity: Optional[float] = None
+    soil_moisture: Optional[float] = None
+    latitude: float
+    longitude: float
+    is_simulation: Optional[bool] = False
+
+class LocationData(BaseModel):
+    latitude: float
+    longitude: float
+
+class WeatherData(BaseModel):
+    wind_speed: float
+    wind_direction: float
+    precipitation: float
+
+class PredictionResult(BaseModel):
+    fire_risk: str
+    confidence: float
+
+class PredictionFlowResponse(BaseModel):
+    success: bool = True
+    location: LocationData
+    sensor_data: ESP32SensorReading
+    weather_data: WeatherData
+    prediction: PredictionResult
+    timestamp: datetime
+
 class SensorData(BaseModel):
     temperature: float
     humidity: float
@@ -41,6 +88,23 @@ class ReadingResponse(BaseModel):
     fire_risk: str
     confidence: float
     created_at: datetime
+    timestamp: Optional[datetime] = None
+    
+    model_config = ConfigDict(from_attributes=True)
+
+class HistoricalReadingResponse(BaseModel):
+    id: Optional[int] = None
+    timestamp: datetime
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    temperature: float
+    humidity: float
+    soil_moisture: float
+    wind_speed: float
+    wind_direction: Optional[float] = None
+    precipitation: Optional[float] = None
+    fire_risk: str
+    confidence: float
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -73,6 +137,22 @@ class AlertResponse(BaseModel):
     message: str
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    temperature: Optional[float] = None
+    humidity: Optional[float] = None
+    soil_moisture: Optional[float] = None
+    wind_speed: Optional[float] = None
+    location: Optional[str] = None
+    email_status: Optional[str] = None
+    email_recipient: Optional[str] = None
+    email_error: Optional[str] = None
+    sms_status: Optional[str] = None
+    sms_recipient: Optional[str] = None
+    sms_message_sid: Optional[str] = None
+    sms_error: Optional[str] = None
+    whatsapp_status: Optional[str] = None
+    whatsapp_recipient: Optional[str] = None
+    whatsapp_message_sid: Optional[str] = None
+    whatsapp_error: Optional[str] = None
     is_acknowledged: bool
     created_at: datetime
 
@@ -80,6 +160,44 @@ class AlertResponse(BaseModel):
 
 class AlertAcknowledge(BaseModel):
     alert_id: int
+
+class ChannelTestResult(BaseModel):
+    success: bool
+    status: str
+    recipient: Optional[str] = None
+    message_sid: Optional[str] = None
+    error: Optional[str] = None
+
+class EmailTestResponse(BaseModel):
+    success: bool
+    status: str
+    message: str
+    recipient: Optional[str] = None
+    error: Optional[str] = None
+
+class SMSTestResponse(BaseModel):
+    success: bool
+    status: str
+    message: str
+    recipient: Optional[str] = None
+    message_sid: Optional[str] = None
+    error: Optional[str] = None
+
+class WhatsAppTestResponse(BaseModel):
+    success: bool
+    status: str
+    message: str
+    recipient: Optional[str] = None
+    message_sid: Optional[str] = None
+    error: Optional[str] = None
+
+class MultiChannelTestResponse(BaseModel):
+    success: bool
+    message: str
+    email: ChannelTestResult
+    sms: ChannelTestResult
+    whatsapp: ChannelTestResult
+
 
 # ============================================================
 # Analytics Schemas

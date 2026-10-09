@@ -12,7 +12,19 @@ import type {
   UserRegister,
   TokenResponse,
   UserResponse,
+  ESP32SensorReading,
+  ESP32SensorResponse,
+  LatestSensorReading,
+  PredictionFlowRequest,
+  PredictionFlowResponse,
+  HistoricalReading,
+  EmailTestResponse,
+  SMSTestResponse,
+  WhatsAppTestResponse,
+  MultiChannelTestResponse,
 } from '../types';
+
+
 
 // ============================================================
 // Axios Instance
@@ -76,8 +88,13 @@ export const authApi = {
 // ============================================================
 
 export const predictionApi = {
-  predict: async (data: SensorData): Promise<PredictionResponse> => {
-    const res = await api.post('/predict/risk', data);
+  predictFlow: async (data: PredictionFlowRequest): Promise<PredictionFlowResponse> => {
+    const res = await api.post('/prediction', data);
+    return res.data;
+  },
+
+  predict: async (data: SensorData, saveToDb: boolean = true): Promise<PredictionResponse> => {
+    const res = await api.post(`/predict/risk?save_to_db=${saveToDb}`, data);
     return res.data;
   },
 
@@ -97,6 +114,26 @@ export const predictionApi = {
 // ============================================================
 
 export const sensorApi = {
+  sendESP32Reading: async (data: ESP32SensorReading): Promise<ESP32SensorResponse> => {
+    const res = await api.post('/readings/sensor', data);
+    return res.data;
+  },
+
+  getLatestReading: async (): Promise<LatestSensorReading> => {
+    const res = await api.get('/readings/latest');
+    return res.data;
+  },
+
+  getESP32Latest: async (): Promise<ESP32SensorResponse> => {
+    const res = await api.get('/readings/sensor/latest');
+    return res.data;
+  },
+
+  getHistoricalReadings: async (limit: number = 50): Promise<HistoricalReading[]> => {
+    const res = await api.get(`/readings?limit=${limit}`);
+    return res.data;
+  },
+
   getAll: async (limit: number = 50): Promise<ReadingResponse[]> => {
     const res = await api.get(`/sensors?limit=${limit}`);
     return res.data;
@@ -134,6 +171,36 @@ export const alertsApi = {
     if (riskLevel && riskLevel !== 'All') params.append('risk_level', riskLevel);
     params.append('limit', limit.toString());
     const res = await api.get(`/alerts?${params.toString()}`);
+    return res.data;
+  },
+
+  getLatest: async (): Promise<AlertResponse | null> => {
+    const res = await api.get('/alerts/latest');
+    return res.data;
+  },
+
+  sendTest: async (): Promise<EmailTestResponse> => {
+    const res = await api.post('/alerts/test');
+    return res.data;
+  },
+
+  sendTestEmail: async (): Promise<EmailTestResponse> => {
+    const res = await api.post('/alerts/test-email');
+    return res.data;
+  },
+
+  sendTestSMS: async (): Promise<SMSTestResponse> => {
+    const res = await api.post('/alerts/test-sms');
+    return res.data;
+  },
+
+  sendTestWhatsApp: async (): Promise<WhatsAppTestResponse> => {
+    const res = await api.post('/alerts/test-whatsapp');
+    return res.data;
+  },
+
+  sendTestAll: async (): Promise<MultiChannelTestResponse> => {
+    const res = await api.post('/alerts/test-all');
     return res.data;
   },
 

@@ -20,7 +20,6 @@ import {
   type FireSpreadData,
 } from '../../utils/fireSpreadEngine';
 import { formatDateTime, getRiskColor, formatConfidence } from '../../utils/formatters';
-import { useTheme } from '../../context/ThemeContext';
 import type { RiskMapPoint } from '../../types';
 
 // Fix Leaflet default marker icon
@@ -248,7 +247,6 @@ export default function FireMap({
   riskFilter,
   searchQuery,
 }: FireMapProps) {
-  const { theme } = useTheme();
   const fetchMapData = useCallback(() => riskMapApi.get(), []);
   const { data: mapPoints, loading, error } = usePolling<RiskMapPoint[]>(fetchMapData, 15000);
   const [showSpread, setShowSpread] = useState(true);
@@ -333,29 +331,33 @@ export default function FireMap({
         className="fire-map"
         zoomControl={true}
       >
-        <LayersControl position="topright" key={theme}>
-          <LayersControl.BaseLayer checked={theme === 'dark'} name="Dark Map">
+        <LayersControl position="topright">
+          <LayersControl.BaseLayer checked name="Satellite">
+            <TileLayer
+              url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+              attribution="&copy; Esri, Maxar, Earthstar Geographics"
+              maxZoom={19}
+            />
+          </LayersControl.BaseLayer>
+          <LayersControl.BaseLayer name="Dark Map">
             <TileLayer
               url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>'
+              maxZoom={19}
             />
           </LayersControl.BaseLayer>
-          <LayersControl.BaseLayer checked={theme === 'light'} name="Light Map">
+          <LayersControl.BaseLayer name="Light Map">
             <TileLayer
               url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>'
-            />
-          </LayersControl.BaseLayer>
-          <LayersControl.BaseLayer name="Satellite">
-            <TileLayer
-              url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-              attribution="&copy; Esri"
+              maxZoom={19}
             />
           </LayersControl.BaseLayer>
           <LayersControl.BaseLayer name="Terrain">
             <TileLayer
               url="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
               attribution="&copy; OpenTopoMap"
+              maxZoom={17}
             />
           </LayersControl.BaseLayer>
         </LayersControl>

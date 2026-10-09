@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 export interface GeolocationData {
   latitude: number | null;
@@ -7,10 +7,21 @@ export interface GeolocationData {
   error: string | null;
   errorCode: number | null;
   loading: boolean;
+  retry: () => void;
+  setManualLocation: (lat: number, lon: number) => void;
 }
 
 export function useGeolocation(): GeolocationData {
-  const [state, setState] = useState<GeolocationData>({
+  const watchIdRef = useRef<number | null>(null);
+
+  const [state, setState] = useState<{
+    latitude: number | null;
+    longitude: number | null;
+    accuracy: number | null;
+    error: string | null;
+    errorCode: number | null;
+    loading: boolean;
+  }>({
     latitude: null,
     longitude: null,
     accuracy: null,
@@ -19,27 +30,24 @@ export function useGeolocation(): GeolocationData {
     loading: true,
   });
 
-  const watchIdRef = useRef<number | null>(null);
-
-  useEffect(() => {
+  const requestLocation = useCallback(() => {
     if (!('geolocation' in navigator)) {
-      setState({
-        latitude: null,
-        longitude: null,
-        accuracy: null,
+      setState((prev) => ({
+        ...prev,
         error: 'Geolocation is not supported by your browser.',
         errorCode: null,
         loading: false,
-      });
+      }));
       return;
     }
 
+    setState((prev) => ({ ...prev, loading: true, error: null }));
+
     const successCallback: PositionCallback = (position) => {
-      const { latitude, longitude, accuracy } = position.coords;
       setState({
-        latitude,
-        longitude,
-        accuracy,
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy,
         error: null,
         errorCode: null,
         loading: false,
@@ -50,7 +58,7 @@ export function useGeolocation(): GeolocationData {
       let errorMessage = 'An unknown location error occurred.';
       switch (err.code) {
         case err.PERMISSION_DENIED:
-          errorMessage = 'Location permission denied.';
+          errorMessage = 'Location permission required for live weather data.';
           break;
         case err.POSITION_UNAVAILABLE:
           errorMessage = 'Unable to determine your location.';
@@ -67,7 +75,16 @@ export function useGeolocation(): GeolocationData {
       }));
     };
 
-    // Watch position with high accuracy and 10s maximumAge / timeout
+    navigator.geolocation.getCurrentPosition(successCallback, errorCallback, {
+      enableHighAccuracy: true,
+      maximumAge: 10000,
+      timeout: 10000,
+    });
+
+    if (watchIdRef.current != null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+    }
+
     watchIdRef.current = navigator.geolocation.watchPosition(
       successCallback,
       errorCallback,
@@ -77,13 +94,31 @@ export function useGeolocation(): GeolocationData {
         timeout: 10000,
       }
     );
+  }, []);
 
+  const setManualLocation = useCallback((lat: number, lon: number) => {
+    setState({
+      latitude: lat,
+      longitude: lon,
+      accuracy: 10,
+      error: null,
+      errorCode: null,
+      loading: false,
+    });
+  }, []);
+
+  useEffect(() => {
+    requestLocation();
     return () => {
       if (watchIdRef.current != null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
     };
-  }, []);
+  }, [requestLocation]);
 
-  return state;
+  return {
+    ...state,
+    retry: requestLocation,
+    setManualLocation,
+  };
 }
