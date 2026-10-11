@@ -33,7 +33,17 @@ import type {
 // Axios Instance
 // ============================================================
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const getApiBaseUrl = (): string => {
+  const configured = import.meta.env.VITE_API_URL;
+  if (typeof window !== 'undefined' && window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    if (!configured || configured.includes('localhost') || configured.includes('127.0.0.1')) {
+      return `http://${window.location.hostname}:8000`;
+    }
+  }
+  return configured || 'http://localhost:8000';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 const api = axios.create({
   baseURL: `${API_BASE_URL}/api`,
@@ -46,7 +56,7 @@ api.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
-  const adminKey = localStorage.getItem('ignite_shield_admin_key') || (import.meta.env.VITE_ADMIN_API_KEY as string);
+  const adminKey = localStorage.getItem('ignite_shield_admin_key');
   if (adminKey) {
     config.headers['X-Admin-Key'] = adminKey;
   }
